@@ -60,3 +60,9 @@ def test_the_delimiter_cannot_be_forged() -> None:
 
 def test_version_is_exported() -> None:
     assert FINGERPRINT_VERSION == 1
+
+
+def test_negative_sub_cent_hashes_as_positive_zero() -> None:
+    """PostgreSQL NUMERIC has no -0.00, so hashing the signed form would
+    produce a fingerprint unrecomputable from the row it is stored beside."""
+    assert _fp(amount=Money.parse("-0.001")) == _fp(amount=Money.parse("0.00"))

@@ -52,12 +52,16 @@ def compute_fingerprint(
     the file is still a duplicate.
     """
     quantised = amount.quantize(CURRENCY_DISPLAY)
+    # PostgreSQL NUMERIC has no negative zero: a stored -0.00 reads back as
+    # 0.00, so hashing the signed form would produce a fingerprint that cannot
+    # be recomputed from its own row.
+    value = quantised.amount if quantised.amount else abs(quantised.amount)
     payload = _DELIMITER.join(
         (
             str(account_id),
             posted_on.isoformat(),
             normalised_merchant,
-            f"{quantised.amount:.2f}",
+            f"{value:.2f}",
             quantised.currency,
         )
     )
