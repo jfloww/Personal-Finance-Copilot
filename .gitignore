@@ -33,3 +33,6 @@ scratch/
 
 # Real annotation data stays local; the example file is committed as a template.
 backend/data/eval/transactions.csv
+
+# Subagent-driven-development scratch: ledgers, briefs, review packages.
+.superpowers/
