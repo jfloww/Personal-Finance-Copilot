@@ -11,10 +11,11 @@ suite that fails there for want of one teaches people to ignore red builds.
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Iterator
 
 import pytest
-from sqlalchemy import Connection, Engine
+from sqlalchemy import Connection, Engine, text
 from sqlalchemy.orm import Session
 
 from offerdelta.config import get_settings
@@ -50,3 +51,22 @@ def session(connection: Connection) -> Iterator[Session]:
         bind=connection, expire_on_commit=False, join_transaction_mode="create_savepoint"
     ) as s:
         yield s
+
+
+@pytest.fixture
+def scratch_schema(engine: Engine) -> Iterator[str]:
+    """An empty schema that exists only for this test.
+
+    Migrations need a database at a known revision, which the shared one is
+    not. Creating a throwaway schema gives each migration test a pristine
+    namespace without a container, and works identically against Neon and the
+    CI service.
+    """
+    name = f"scratch_{uuid.uuid4().hex[:12]}"
+    with engine.begin() as conn:
+        conn.execute(text(f'CREATE SCHEMA "{name}"'))
+    try:
+        yield name
+    finally:
+        with engine.begin() as conn:
+            conn.execute(text(f'DROP SCHEMA "{name}" CASCADE'))
