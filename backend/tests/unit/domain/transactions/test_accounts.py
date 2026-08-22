@@ -38,3 +38,25 @@ def test_a_key_with_no_content_is_refused(raw: str) -> None:
 def test_it_is_idempotent() -> None:
     once = canonical_account_key("Chase Checking")
     assert canonical_account_key(once) == once
+
+
+def test_an_accent_is_not_folded_away() -> None:
+    """Café Checking and Caf Checking are different accounts."""
+    assert canonical_account_key("Café Checking") != canonical_account_key("Caf Checking")
+    assert canonical_account_key("Café Checking") == "café-checking"
+
+
+def test_a_non_latin_name_is_accepted() -> None:
+    """A name in another script is a real name, not an empty one."""
+    assert canonical_account_key("저축") == "저축"
+
+
+def test_composed_and_decomposed_forms_agree() -> None:
+    """NFKC: the same name typed two ways is one account."""
+    composed = "Café"  # é as one codepoint
+    decomposed = "Café"  # e + combining acute
+    assert canonical_account_key(composed) == canonical_account_key(decomposed)
+
+
+def test_non_latin_case_variants_still_collapse() -> None:
+    assert canonical_account_key("СБЕР") == canonical_account_key("сбер")  # noqa: RUF001
