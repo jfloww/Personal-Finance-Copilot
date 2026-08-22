@@ -345,51 +345,45 @@ def test_the_original_is_kept_even_when_normalisation_changed_it(
     assert row.normalised_merchant != row.raw["Description"]
 
 
-# --- Fingerprints ----------------------------------------------------------
+# --- Duplicate detection ----------------------------------------------------
 
 
-def test_the_same_transaction_fingerprints_identically(tmp_path: Path) -> None:
-    # Re-importing the same file must not create new identities.
-    first = preview_csv(_write(tmp_path, CHASE))
-    second = preview_csv(_write(tmp_path, CHASE, name="again.csv"))
-    assert first.rows[0].fingerprint == second.rows[0].fingerprint
-
-
-def test_the_fingerprint_ignores_position(tmp_path: Path) -> None:
-    # A duplicate that moved position is still a duplicate.
-    reordered = """
-Transaction Date,Description,Amount
-08/18/2026,NETFLIX.COM,-15.99
-08/17/2026,SQ *BLUE BOTTLE 4412,-4.50
-08/20/2026,ACME CORP DIRECT DEP,3210.44
+def test_duplicate_grouping_ignores_row_position(tmp_path: Path) -> None:
+    # A duplicate that moved position is still a duplicate: the two identical
+    # rows below are not adjacent, and must still be grouped together.
+    scattered = """
+Date,Description,Amount
+2026-08-17,BLUE BOTTLE,-4.50
+2026-08-18,NETFLIX,-15.99
+2026-08-17,BLUE BOTTLE,-4.50
 """
-    original = preview_csv(_write(tmp_path, CHASE))
-    shuffled = preview_csv(_write(tmp_path, reordered, name="b.csv"))
-    assert original.rows[0].fingerprint == shuffled.rows[1].fingerprint
+    preview = preview_csv(_write(tmp_path, scattered))
+    groups = preview.duplicate_groups
+    assert len(groups) == 1
+    _, rows = groups[0]
+    assert len(rows) == 2
 
 
-def test_a_different_amount_fingerprints_differently(tmp_path: Path) -> None:
-    dearer = """
-Transaction Date,Description,Amount
-08/17/2026,SQ *BLUE BOTTLE 4412,-5.50
-08/18/2026,NETFLIX.COM,-15.99
+def test_a_different_amount_is_not_grouped_as_a_duplicate(tmp_path: Path) -> None:
+    distinct_amounts = """
+Date,Description,Amount
+2026-08-17,BLUE BOTTLE,-4.50
+2026-08-17,BLUE BOTTLE,-5.50
 """
-    original = preview_csv(_write(tmp_path, CHASE))
-    changed = preview_csv(_write(tmp_path, dearer, name="b.csv"))
-    assert original.rows[0].fingerprint != changed.rows[0].fingerprint
+    preview = preview_csv(_write(tmp_path, distinct_amounts))
+    assert preview.duplicate_groups == []
 
 
-def test_merchant_variants_fingerprint_together(tmp_path: Path) -> None:
+def test_merchant_variants_are_grouped_as_duplicates(tmp_path: Path) -> None:
     # The same charge exported twice with different processor noise is one
     # transaction, and dedupe has to see that.
-    variant = """
-Transaction Date,Description,Amount
-08/17/2026,TST* BLUE BOTTLE,-4.50
-08/18/2026,NETFLIX.COM,-15.99
+    variants = """
+Date,Description,Amount
+2026-08-17,SQ *BLUE BOTTLE 4412,-4.50
+2026-08-17,TST* BLUE BOTTLE,-4.50
 """
-    original = preview_csv(_write(tmp_path, CHASE))
-    other = preview_csv(_write(tmp_path, variant, name="b.csv"))
-    assert original.rows[0].fingerprint == other.rows[0].fingerprint
+    preview = preview_csv(_write(tmp_path, variants))
+    assert len(preview.duplicate_groups) == 1
 
 
 def test_duplicates_are_reported_not_removed(tmp_path: Path) -> None:

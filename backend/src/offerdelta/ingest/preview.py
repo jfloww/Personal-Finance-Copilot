@@ -17,19 +17,18 @@ re-reading the file.
 
 **Duplicates are reported, not removed.** Two identical coffees on one day are a
 legitimate pair, and an importer that silently deduplicated them would delete
-real money. The preview groups rows sharing a fingerprint and leaves the
-decision to a person.
+real money. The preview groups rows sharing the same visible content and leaves
+the decision to a person.
 """
 
 from __future__ import annotations
 
 import csv
-import hashlib
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
-from typing import Final
+from typing import Final, cast
 
 from offerdelta.domain.common.errors import ValidationError
 from offerdelta.domain.common.money import Money
@@ -41,6 +40,13 @@ from offerdelta.ingest.mapping import ColumnMapping, MappingDetection, detect_ma
 #: order. Enough to find a decisive day-above-twelve without reading a whole
 #: year of statements.
 SAMPLE_SIZE: Final = 200
+
+#: csv.DictReader puts surplus cells under a key and missing cells under a
+#: value. Both defaults are `None`, which violates `dict[str, str]` and
+#: serialises to a JSON key of "null". Explicit sentinels make a ragged row
+#: detectable instead of silently corrupting the stored provenance.
+_RESTKEY: Final = "__surplus__"
+_RESTVAL: Final = "\x00__missing__"
 
 
 @dataclass(frozen=True)
@@ -57,25 +63,6 @@ class ParsedRow:
 
     #: Every original cell, so a figure can be traced to the text behind it.
     raw: dict[str, str]
-
-    @property
-    def fingerprint(self) -> str:
-        """A stable identity for duplicate detection.
-
-        Built from the normalised content rather than the row's position, so
-        re-importing the same file — or the same transaction from an overlapping
-        date range — produces the same value. Deliberately does not include the
-        line number: a duplicate that moved position is still a duplicate.
-        """
-        payload = "\x1f".join(
-            (
-                self.posted_on.isoformat(),
-                self.normalised_merchant,
-                str(self.amount.amount),
-                self.amount.currency,
-            )
-        )
-        return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
 
 
 @dataclass(frozen=True)
@@ -114,14 +101,15 @@ class ImportPreview:
 
     @property
     def duplicate_groups(self) -> list[tuple[str, list[ParsedRow]]]:
-        """Rows sharing a fingerprint, reported rather than removed.
+        """Rows that look identical, reported rather than removed.
 
-        Two identical coffees on one day are a real pair. Silently collapsing
-        them would delete money that was actually spent.
+        Grouped on the visible content rather than a stored fingerprint: this
+        is a preview, and it has no account to compute a real identity against.
         """
         grouped: dict[str, list[ParsedRow]] = defaultdict(list)
         for row in self.rows:
-            grouped[row.fingerprint].append(row)
+            key = f"{row.posted_on.isoformat()}|{row.normalised_merchant}|{row.amount.amount:.2f}"
+            grouped[key].append(row)
         return sorted(
             ((key, rows) for key, rows in grouped.items() if len(rows) > 1),
             key=lambda item: item[1][0].line,
@@ -196,14 +184,30 @@ def preview_csv(
         raise ValidationError(f"no file at {path}")
 
     with path.open(encoding="utf-8-sig", newline="") as handle:
-        reader = csv.DictReader(handle)
+        reader = csv.DictReader(handle, restkey=_RESTKEY, restval=_RESTVAL)
         headers = tuple(reader.fieldnames or ())
-        rows = list(reader)
+        # `fieldnames` forces the header read, so line_num now points at the
+        # last physical line the header occupied — usually 1.
+        previous_line = reader.line_num
+        # `str | list[str]`, not `str`: csv.DictReader puts every surplus cell
+        # under `_RESTKEY` as a list, which is exactly the shape `_reject_ragged`
+        # and `_displayable` below are written to detect.
+        numbered: list[tuple[int, dict[str, str | list[str]]]] = []
+        for record in reader:
+            numbered.append((previous_line + 1, record))
+            previous_line = reader.line_num
+
+    rows = [record for _, record in numbered]
 
     if not headers:
         raise ValidationError(f"{path.name} has no header row")
 
-    sample = {header: [(row.get(header) or "") for row in rows[:SAMPLE_SIZE]] for header in headers}
+    # `row.get(header) or ""` alone would let the missing-cell sentinel through:
+    # it is a non-empty string, so a short row would otherwise poison the
+    # sample that mapping and date-order detection are confirmed against.
+    sample = {
+        header: [_sample_value(row.get(header)) for row in rows[:SAMPLE_SIZE]] for header in headers
+    }
 
     detection = detect_mapping(list(headers), sample)
     resolved = mapping or detection.mapping
@@ -228,11 +232,14 @@ def preview_csv(
 
     parsed: list[ParsedRow] = []
     errors: list[RowError] = []
-    for line, row in enumerate(rows, start=2):
+    for line, row in numbered:
         try:
-            parsed.append(_to_row(row, line, resolved, order))
+            _reject_ragged(row)
+            # `_reject_ragged` raised if `row` held a surplus list or a missing
+            # sentinel, so every value here is a plain cell.
+            parsed.append(_to_row(cast(dict[str, str], row), line, resolved, order))
         except ValidationError as error:
-            errors.append(RowError(line=line, reason=str(error), raw=dict(row)))
+            errors.append(RowError(line=line, reason=str(error), raw=_displayable(row)))
 
     return ImportPreview(
         path=str(path),
@@ -244,6 +251,52 @@ def preview_csv(
         rows=tuple(parsed),
         errors=tuple(errors),
     )
+
+
+def _sample_value(value: str | list[str] | None) -> str:
+    """A cell's value for detection purposes: blank if absent or missing.
+
+    The missing-cell sentinel is deliberately non-empty so a ragged row is
+    never mistaken for a blank one — but that same non-emptiness would corrupt
+    the sample that column and date-order detection confirm their guesses
+    against, so it is normalised back to blank here. A list only ever appears
+    under `_RESTKEY`, never under a real header, but the type is shared with
+    `numbered`'s rows, so it is handled the same way: not a usable sample.
+    """
+    if value is None or isinstance(value, list) or value == _RESTVAL:
+        return ""
+    return value
+
+
+def _reject_ragged(row: dict[str, str | list[str]]) -> None:
+    """A row that does not match the header is refused, not repaired.
+
+    Guessing which column a surplus cell belongs to is exactly the kind of
+    silent decision that puts a wrong number in front of someone.
+    """
+    if _RESTKEY in row:
+        surplus = row[_RESTKEY]
+        count = len(surplus) if isinstance(surplus, list) else 1
+        raise ValidationError(
+            f"the row has {count} extra cell(s) beyond the header; "
+            f"the file does not match its own columns"
+        )
+    missing = [key for key, value in row.items() if value == _RESTVAL]
+    if missing:
+        raise ValidationError(f"the row is missing cell(s) for: {', '.join(sorted(missing))}")
+
+
+def _displayable(row: dict[str, str | list[str]]) -> dict[str, str]:
+    """Raw cells with the sentinels made readable for the error report."""
+    out: dict[str, str] = {}
+    for key, value in row.items():
+        # A list only ever appears under `_RESTKEY`; narrowing on its shape
+        # rather than the key name keeps `value` provably `str` below.
+        if isinstance(value, list):
+            out[key] = ", ".join(value)
+        else:
+            out[key] = "" if value == _RESTVAL else value
+    return out
 
 
 def _to_row(row: dict[str, str], line: int, mapping: ColumnMapping, order: DateOrder) -> ParsedRow:

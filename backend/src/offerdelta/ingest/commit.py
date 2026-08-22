@@ -61,8 +61,12 @@ def plan_import(preview: ImportPreview, *, account: str) -> ImportPlan:
     seen: dict[str, int] = defaultdict(int)
     planned: list[PlannedRow] = []
     for row in preview.rows:
-        seen[row.fingerprint] += 1
-        planned.append(PlannedRow(row=row, occurrence=seen[row.fingerprint]))
+        # Content-based identity, not a stored fingerprint: preview has no
+        # account to compute a real one against. Mirrors
+        # ImportPreview.duplicate_groups' grouping key.
+        key = f"{row.posted_on.isoformat()}|{row.normalised_merchant}|{row.amount.amount:.2f}"
+        seen[key] += 1
+        planned.append(PlannedRow(row=row, occurrence=seen[key]))
 
     return ImportPlan(
         account=account,
