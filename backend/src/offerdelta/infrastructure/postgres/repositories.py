@@ -26,6 +26,7 @@ from offerdelta.infrastructure.postgres.models import (
     TransactionRow,
 )
 from offerdelta.ingest.commit import ImportPlan
+from offerdelta.ingest.preview import ParsedRow
 
 
 @dataclass(frozen=True)
@@ -92,6 +93,17 @@ class TransactionImportResult:
 def _quantised(amount: Money) -> Money:
     """Persistence is a rounding boundary; the policy is recorded alongside."""
     return amount.quantize(CURRENCY_DISPLAY)
+
+
+def _content_key(row: ParsedRow) -> str:
+    """Content-derived identity: date, normalised merchant, amount at 2dp.
+
+    Interim: Task 6 replaces this method with a record-based write path.
+    Mirrors ImportPlan.plan_import's grouping key now that ParsedRow no
+    longer carries a stored fingerprint (preview has no account to compute
+    a real one against).
+    """
+    return f"{row.posted_on.isoformat()}|{row.normalised_merchant}|{row.amount.amount:.2f}"
 
 
 class ComparisonRunRepository:
@@ -210,7 +222,10 @@ class TransactionRepository:
         exception; a genuinely concurrent import still fails the whole unit of
         work rather than leaving a partial batch behind.
         """
-        fingerprints = {planned.row.fingerprint for planned in plan.rows}
+        # Interim: Task 6 replaces this method with a record-based write path.
+        # ParsedRow no longer carries a stored fingerprint, so identity is
+        # derived from content here, matching plan_import's grouping key.
+        fingerprints = {_content_key(planned.row) for planned in plan.rows}
         existing = set(
             self._session.execute(
                 select(TransactionRow.fingerprint, TransactionRow.occurrence).where(
@@ -226,12 +241,13 @@ class TransactionRepository:
 
         for planned in plan.rows:
             row = planned.row
-            identity = (row.fingerprint, planned.occurrence)
+            key = _content_key(row)
+            identity = (key, planned.occurrence)
             if identity in existing:
                 already_stored.append(
                     AlreadyStoredTransaction(
                         source_line=row.line,
-                        fingerprint=row.fingerprint,
+                        fingerprint=key,
                         occurrence=planned.occurrence,
                     )
                 )
@@ -249,7 +265,7 @@ class TransactionRepository:
                     normalised_merchant=row.normalised_merchant,
                     currency=row.amount.currency,
                     amount=_quantised(row.amount).amount,
-                    fingerprint=row.fingerprint,
+                    fingerprint=key,
                     occurrence=planned.occurrence,
                     source_file=plan.source_file,
                     source_line=row.line,
