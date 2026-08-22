@@ -8,7 +8,6 @@ overwriting — an audit record you can quietly replace is not an audit record.
 
 from __future__ import annotations
 
-import hashlib
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
@@ -21,13 +20,18 @@ from offerdelta.application.queries.get_demo_comparison import ComparisonView
 from offerdelta.domain.common.errors import ValidationError
 from offerdelta.domain.common.money import Money
 from offerdelta.domain.common.rounding import CURRENCY_DISPLAY
+from offerdelta.domain.transactions.accounts import canonical_account_key
+from offerdelta.domain.transactions.fingerprint import (
+    FINGERPRINT_VERSION,
+    compute_fingerprint,
+)
 from offerdelta.infrastructure.postgres.models import (
+    AccountRow,
     ComparisonRunRow,
     ResultComponentRow,
     TransactionRow,
 )
 from offerdelta.ingest.commit import ImportPlan
-from offerdelta.ingest.preview import ParsedRow
 
 
 @dataclass(frozen=True)
@@ -53,16 +57,16 @@ class StoredTransaction:
 
     id: uuid.UUID
     imported_at: datetime
-    account: str
+    account_id: uuid.UUID
     posted_on: date
     description: str
     normalised_merchant: str
     amount: Money
     fingerprint: str
     occurrence: int
-    source_file: str
-    source_line: int
-    raw_cells: dict[str, str]
+    source_file: str | None
+    source_line: int | None
+    raw_cells: dict[str, str] | None
 
 
 @dataclass(frozen=True)
@@ -96,21 +100,22 @@ def _quantised(amount: Money) -> Money:
     return amount.quantize(CURRENCY_DISPLAY)
 
 
-def _content_key(row: ParsedRow) -> str:
-    """Content-derived identity: date, normalised merchant, amount at 2dp, currency.
+def _resolve_account(session: Session, name: str, *, now: datetime) -> uuid.UUID:
+    """Find the account this import belongs to, registering it on first sight.
 
-    Hashed to 32 chars because that is the width of the ``fingerprint``
-    column, and it carries the currency because two charges differing only by
-    currency are different money.
-
-    Interim: Task 6 replaces this with a record-based write path built on
-    ``offerdelta.domain.transactions.fingerprint.compute_fingerprint``.
+    Interim: Task 6 gives account registration an explicit step of its own.
+    Until then the foreign key still has to point at a real row, and minting a
+    fresh account per import would defeat the very constraint it feeds.
     """
-    payload = (
-        f"{row.posted_on.isoformat()}|{row.normalised_merchant}"
-        f"|{row.amount.amount:.2f}|{row.amount.currency}"
-    )
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
+    key = canonical_account_key(name)
+    existing = session.scalar(select(AccountRow.id).where(AccountRow.key == key))
+    if existing is not None:
+        return existing
+
+    identifier = uuid.uuid4()
+    session.add(AccountRow(id=identifier, key=key, display_name=name.strip(), created_at=now))
+    session.flush()
+    return identifier
 
 
 class ComparisonRunRepository:
@@ -229,26 +234,36 @@ class TransactionRepository:
         exception; a genuinely concurrent import still fails the whole unit of
         work rather than leaving a partial batch behind.
         """
-        # Interim: Task 6 replaces this method with a record-based write path.
-        # ParsedRow no longer carries a stored fingerprint, so identity is
-        # derived from content here, matching plan_import's grouping key.
-        fingerprints = {_content_key(planned.row) for planned in plan.rows}
+        # Interim: Task 6 replaces this method with a record-based write path
+        # that carries a batch and an external id. What it must not do in the
+        # meantime is stamp a fingerprint_version onto a hash no version of
+        # the fingerprint ever produced, so identity comes from the domain
+        # function the column is named after.
+        imported_at = now or datetime.now(UTC)
+        account_id = _resolve_account(self._session, plan.account, now=imported_at)
+        keys = [
+            compute_fingerprint(
+                account_id=account_id,
+                posted_on=planned.row.posted_on,
+                normalised_merchant=planned.row.normalised_merchant,
+                amount=planned.row.amount,
+            )
+            for planned in plan.rows
+        ]
         existing = set(
             self._session.execute(
                 select(TransactionRow.fingerprint, TransactionRow.occurrence).where(
-                    TransactionRow.account == plan.account,
-                    TransactionRow.fingerprint.in_(fingerprints),
+                    TransactionRow.account_id == account_id,
+                    TransactionRow.fingerprint.in_(set(keys)),
                 )
             ).all()
         )
 
         imported_ids: list[uuid.UUID] = []
         already_stored: list[AlreadyStoredTransaction] = []
-        imported_at = now or datetime.now(UTC)
 
-        for planned in plan.rows:
+        for key, planned in zip(keys, plan.rows, strict=True):
             row = planned.row
-            key = _content_key(row)
             identity = (key, planned.occurrence)
             if identity in existing:
                 already_stored.append(
@@ -266,13 +281,16 @@ class TransactionRepository:
                 TransactionRow(
                     id=identifier,
                     imported_at=imported_at,
-                    account=plan.account,
+                    account_id=account_id,
+                    batch_id=None,
                     posted_on=row.posted_on,
                     description=row.description,
                     normalised_merchant=row.normalised_merchant,
                     currency=row.amount.currency,
                     amount=_quantised(row.amount).amount,
+                    external_id=None,
                     fingerprint=key,
+                    fingerprint_version=FINGERPRINT_VERSION,
                     occurrence=planned.occurrence,
                     source_file=plan.source_file,
                     source_line=row.line,
@@ -299,19 +317,19 @@ class TransactionRepository:
         row = self._session.get(TransactionRow, transaction_id)
         return None if row is None else _to_stored_transaction(row)
 
-    def recent(self, *, account: str, limit: int = 20) -> list[StoredTransaction]:
+    def recent(self, *, account_id: uuid.UUID, limit: int = 20) -> list[StoredTransaction]:
         rows = self._session.scalars(
             select(TransactionRow)
-            .where(TransactionRow.account == account)
+            .where(TransactionRow.account_id == account_id)
             .order_by(TransactionRow.posted_on.desc(), TransactionRow.id)
             .limit(limit)
         ).all()
         return [_to_stored_transaction(row) for row in rows]
 
-    def count(self, *, account: str | None = None) -> int:
+    def count(self, *, account_id: uuid.UUID | None = None) -> int:
         statement = select(TransactionRow.id)
-        if account is not None:
-            statement = statement.where(TransactionRow.account == account)
+        if account_id is not None:
+            statement = statement.where(TransactionRow.account_id == account_id)
         return len(self._session.scalars(statement).all())
 
 
@@ -335,7 +353,7 @@ def _to_stored_transaction(row: TransactionRow) -> StoredTransaction:
     return StoredTransaction(
         id=row.id,
         imported_at=row.imported_at,
-        account=row.account,
+        account_id=row.account_id,
         posted_on=row.posted_on,
         description=row.description,
         normalised_merchant=row.normalised_merchant,
@@ -344,5 +362,5 @@ def _to_stored_transaction(row: TransactionRow) -> StoredTransaction:
         occurrence=row.occurrence,
         source_file=row.source_file,
         source_line=row.source_line,
-        raw_cells=dict(row.raw_cells),
+        raw_cells=None if row.raw_cells is None else dict(row.raw_cells),
     )

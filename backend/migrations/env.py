@@ -10,7 +10,7 @@ from __future__ import annotations
 from logging.config import fileConfig
 
 from alembic import context
-from sqlalchemy import engine_from_config, pool
+from sqlalchemy import Connection, engine_from_config, pool
 
 from offerdelta.config import get_settings
 from offerdelta.infrastructure.postgres.models import Base
@@ -39,23 +39,37 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
+def _run(connection: Connection) -> None:
+    context.configure(
+        connection=connection,
+        target_metadata=target_metadata,
+        # Catches a column whose type drifts from the model — a NUMERIC
+        # quietly becoming a float is exactly the change that must never
+        # pass unnoticed here.
+        compare_type=True,
+    )
+    with context.begin_transaction():
+        context.run_migrations()
+
+
 def run_migrations_online() -> None:
+    # A caller may supply its own connection, which is Alembic's documented
+    # hook for running migrations programmatically. The migration tests use it
+    # to confine a whole upgrade to a throwaway schema: without it this
+    # function builds an engine from settings and there is no way to exercise
+    # the from-scratch path except against the real database.
+    supplied = config.attributes.get("connection")
+    if supplied is not None:
+        _run(supplied)
+        return
+
     section = config.get_section(config.config_ini_section, {})
     section["sqlalchemy.url"] = _url()
 
     connectable = engine_from_config(section, prefix="sqlalchemy.", poolclass=pool.NullPool)
 
     with connectable.connect() as connection:
-        context.configure(
-            connection=connection,
-            target_metadata=target_metadata,
-            # Catches a column whose type drifts from the model — a NUMERIC
-            # quietly becoming a float is exactly the change that must never
-            # pass unnoticed here.
-            compare_type=True,
-        )
-        with context.begin_transaction():
-            context.run_migrations()
+        _run(connection)
 
 
 if context.is_offline_mode():

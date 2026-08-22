@@ -24,7 +24,6 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import (
-    JSON,
     Boolean,
     CheckConstraint,
     Date,
@@ -33,10 +32,13 @@ from sqlalchemy import (
     Index,
     Integer,
     Numeric,
+    SmallInteger,
     String,
     Text,
     UniqueConstraint,
+    text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 #: Eighteen digits with two decimal places. Comfortably beyond any salary, and
@@ -123,24 +125,76 @@ class ResultComponentRow(Base):
     __table_args__ = (Index("ix_result_components_run_position", "run_id", "position"),)
 
 
-class TransactionRow(Base):
-    """One transaction accepted from an inspected bank-export preview.
+class AccountRow(Base):
+    """An account the user has deliberately registered.
 
-    ``fingerprint`` is not unique by itself: two identical charges on one day
-    can both be real. ``occurrence`` preserves that multiplicity, while the
-    three-column constraint makes importing the same rows into the same account
-    idempotent.
-
-    Kind and category arrive later, after categorisation. This table records
-    what the bank said without inventing a classification at ingest time.
+    The canonical `key` is what every constraint sees; `display_name` is what a
+    person reads. Keeping both means normalisation can be strict without
+    turning "Chase Checking" into "chase-checking" on a report.
     """
+
+    __tablename__ = "accounts"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True)
+    key: Mapped[str] = mapped_column(String(100), unique=True)
+    display_name: Mapped[str] = mapped_column(String(200))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class ImportBatchRow(Base):
+    """One import of one file.
+
+    `source_sha256` is what makes a byte-identical re-import a provable no-op
+    rather than an inference. The declared window is what makes "this is a
+    complete snapshot" a checkable claim.
+    """
+
+    __tablename__ = "import_batches"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True)
+    account_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("accounts.id"))
+    source_file: Mapped[str] = mapped_column(String(255))
+    source_sha256: Mapped[str] = mapped_column(String(64))
+    mode: Mapped[str] = mapped_column(String(16))
+    window_start: Mapped[date | None] = mapped_column(Date, nullable=True)
+    window_end: Mapped[date | None] = mapped_column(Date, nullable=True)
+    row_count: Mapped[int] = mapped_column(Integer)
+    imported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        CheckConstraint(
+            "mode IN ('snapshot', 'incremental')",
+            name="ck_import_batches_mode",
+        ),
+        CheckConstraint(
+            "mode <> 'snapshot' OR (window_start IS NOT NULL AND window_end IS NOT NULL)",
+            name="ck_import_batches_snapshot_window",
+        ),
+        CheckConstraint(
+            "window_start IS NULL OR window_start <= window_end",
+            name="ck_import_batches_window_ordered",
+        ),
+        UniqueConstraint(
+            "account_id",
+            "source_sha256",
+            name="uq_import_batches_account_checksum",
+        ),
+    )
+
+
+class TransactionRow(Base):
+    """One imported bank row."""
 
     __tablename__ = "transactions"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True)
     imported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
-    account: Mapped[str] = mapped_column(String(200))
+    account_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("accounts.id"))
+    batch_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("import_batches.id"), nullable=True
+    )
+
     posted_on: Mapped[date] = mapped_column(Date)
     description: Mapped[str] = mapped_column(Text)
     normalised_merchant: Mapped[str] = mapped_column(Text)
@@ -148,24 +202,38 @@ class TransactionRow(Base):
     currency: Mapped[str] = mapped_column(String(3))
     amount: Mapped[Decimal] = mapped_column(MONEY)
 
-    fingerprint: Mapped[str] = mapped_column(String(32), index=True)
+    #: The bank's own id when the export carries one. Authoritative for dedupe.
+    external_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
+
+    fingerprint: Mapped[str] = mapped_column(String(32))
+    fingerprint_version: Mapped[int] = mapped_column(SmallInteger)
     occurrence: Mapped[int] = mapped_column(Integer)
 
-    source_file: Mapped[str] = mapped_column(String(255))
-    source_line: Mapped[int] = mapped_column(Integer)
-    raw_cells: Mapped[dict[str, str]] = mapped_column(JSON)
+    #: Absent for manual entry, which has no file behind it.
+    source_file: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    source_line: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    raw_cells: Mapped[dict[str, str] | None] = mapped_column(JSONB, nullable=True)
 
     __table_args__ = (
         CheckConstraint("occurrence > 0", name="ck_transactions_occurrence_positive"),
-        CheckConstraint("source_line > 1", name="ck_transactions_source_line_after_header"),
+        CheckConstraint(
+            "source_line IS NULL OR source_line > 1",
+            name="ck_transactions_source_line_after_header",
+        ),
         UniqueConstraint(
-            "account",
+            "account_id",
             "fingerprint",
             "occurrence",
             name="uq_transactions_account_fingerprint_occurrence",
         ),
-        Index("ix_transactions_account_posted_on", "account", "posted_on"),
-        Index("ix_transactions_imported_at", "imported_at"),
+        Index(
+            "uq_transactions_account_external_id",
+            "account_id",
+            "external_id",
+            unique=True,
+            postgresql_where=text("external_id IS NOT NULL"),
+        ),
+        Index("ix_transactions_account_posted_on", "account_id", "posted_on"),
     )
 
 
