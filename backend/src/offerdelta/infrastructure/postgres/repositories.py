@@ -8,6 +8,7 @@ overwriting — an audit record you can quietly replace is not an audit record.
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
@@ -96,14 +97,20 @@ def _quantised(amount: Money) -> Money:
 
 
 def _content_key(row: ParsedRow) -> str:
-    """Content-derived identity: date, normalised merchant, amount at 2dp.
+    """Content-derived identity: date, normalised merchant, amount at 2dp, currency.
 
-    Interim: Task 6 replaces this method with a record-based write path.
-    Mirrors ImportPlan.plan_import's grouping key now that ParsedRow no
-    longer carries a stored fingerprint (preview has no account to compute
-    a real one against).
+    Hashed to 32 chars because that is the width of the ``fingerprint``
+    column, and it carries the currency because two charges differing only by
+    currency are different money.
+
+    Interim: Task 6 replaces this with a record-based write path built on
+    ``offerdelta.domain.transactions.fingerprint.compute_fingerprint``.
     """
-    return f"{row.posted_on.isoformat()}|{row.normalised_merchant}|{row.amount.amount:.2f}"
+    payload = (
+        f"{row.posted_on.isoformat()}|{row.normalised_merchant}"
+        f"|{row.amount.amount:.2f}|{row.amount.currency}"
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
 
 
 class ComparisonRunRepository:
