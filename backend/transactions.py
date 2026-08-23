@@ -11,7 +11,7 @@ unknown arguments by default, and nothing here uses `parse_known_args`.
 **Preview never falls through into a write.** The old script rendered ten of
 four hundred rows and then committed in the same non-interactive invocation,
 which made the preview decorative. `commit` is a separate subcommand: it
-always prints a one-line summary of the file, account, mode, and window
+always prints a one-line summary of the file, account, mode, and any window
 *before* doing anything else -- including on `--yes`, where nobody is there
 to read a prompt but the run should still leave a record of what it did --
 then requires `--yes` or an interactive confirmation to proceed. The summary

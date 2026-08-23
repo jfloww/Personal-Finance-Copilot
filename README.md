@@ -225,13 +225,57 @@ uv run alembic upgrade head        # apply migrations, if a DSN is set
 ### The tools
 
 ```bash
-uv run python preview_import.py statement.csv   # what an import would produce; writes nothing
-uv run python preview_import.py statement.csv --commit --account=checking  # after migration
+uv run python transactions.py preview statement.csv    # what an import would produce; writes nothing
+uv run python transactions.py commit statement.csv ...  # see "Importing transactions" below
 uv run python validate_dataset.py               # check annotations as you go
 uv run python llm_smoke.py                      # inspect the exact request, offline, no key
 uv run python llm_smoke.py --live               # one real API call; needs a key
 uv run python run_evaluation.py                 # rules vs LLM vs hybrid
 ```
+
+### Importing transactions
+
+`preview` never writes; `commit` always prints a one-line summary of what it is about to do, then
+requires `--yes` or `yes` typed at an interactive prompt before writing anything — a non-terminal
+stdin (piped input, redirected from a file, CI) is refused rather than trusted. An account must be
+registered before anything can be imported against it.
+
+Register the account once:
+
+```bash
+uv run python transactions.py accounts add "Chase Checking"
+```
+
+Preview before you write — this never touches the database:
+
+```bash
+uv run python transactions.py preview statement.csv --dates=ISO
+```
+
+Two import modes exist because a fingerprint plus a per-file occurrence count cannot tell a
+genuine third identical charge from one already stored — that fact isn't in the file, it's a fact
+about how the file was produced. So the mode is declared, not guessed:
+
+Commit a full-window export in **snapshot** mode. Both `--from` and `--to` are required, and every
+row must fall inside them:
+
+```bash
+uv run python transactions.py commit statement.csv \
+  --account=chase-checking --mode=snapshot \
+  --from=2026-08-01 --to=2026-08-31 --yes
+```
+
+Commit an append-only export in **incremental** mode. This needs the bank's own transaction id
+column mapped in, because without a stable id there is no way to tell a genuine repeat charge from
+one already stored:
+
+```bash
+uv run python transactions.py commit new-activity.csv \
+  --account=chase-checking --mode=incremental \
+  --map=external_id:TransactionID --yes
+```
+
+Chase exports carry no stable id, so Chase files use snapshot mode with an explicit window.
 
 ---
 
@@ -251,7 +295,7 @@ docs/status/                   dated progress notes and the running TODO
 docs/planning/PHASE-1-SCOPE.md scope contract
 ```
 
-929 tests. Lint, types, architecture boundaries, and tests run in one command and in CI.
+1006 tests. Lint, types, architecture boundaries, and tests run in one command and in CI.
 
 ## A note on naming
 
