@@ -97,6 +97,22 @@ def test_incremental_refuses_a_row_with_a_blank_id_cell(tmp_path: Path) -> None:
         plan_records(preview, account_id=ACCOUNT, mode=ImportMode.INCREMENTAL, window=None)
 
 
+def test_incremental_refuses_two_rows_sharing_an_id_in_one_file(tmp_path: Path) -> None:
+    """Neither row is in `existing_external`, so the DB-side dedupe check
+    cannot catch this - it has to be refused while planning, with the
+    file's own offending lines named, or the only message a person ever
+    sees is an unfixable "retry" from the unique constraint.
+    """
+    preview = _preview_with_ids(
+        tmp_path,
+        "2026-08-17,BLUE BOTTLE,-4.50,TXN-1\n2026-08-18,TRANSIT,-2.75,TXN-1\n",
+    )
+    with pytest.raises(ValidationError, match="share a transaction id") as excinfo:
+        plan_records(preview, account_id=ACCOUNT, mode=ImportMode.INCREMENTAL, window=None)
+    assert "line 2" in str(excinfo.value)
+    assert "line 3" in str(excinfo.value)
+
+
 def test_incremental_with_every_row_id_populated_succeeds(tmp_path: Path) -> None:
     preview = _preview_with_ids(
         tmp_path,

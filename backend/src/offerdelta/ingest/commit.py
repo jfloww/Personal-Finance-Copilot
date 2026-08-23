@@ -80,6 +80,41 @@ def _external_id(row: ParsedRow, column: str | None) -> str | None:
     return (row.raw.get(column) or "").strip() or None
 
 
+def _refuse_duplicate_ids(rows: tuple[ParsedRow, ...], id_column: str | None) -> None:
+    """Refuse when two rows in one file share an external id.
+
+    Two rows sharing an id *within this file* are not ambiguous the way a
+    blank cell is - the file itself is claiming they're the same charge -
+    but `existing_external` only knows about ids already stored, so neither
+    row is caught there. Both get planned, both get written, and the second
+    write trips the partial unique index, surfacing as "conflicted with
+    another import; retry" - a message retrying can never resolve, because
+    the same plan is rebuilt every time. Naming the file's own offending
+    lines here is the version of that message a person can actually act on.
+    """
+    by_id: dict[str, list[int]] = defaultdict(list)
+    for row in rows:
+        external_id = _external_id(row, id_column)
+        if external_id is not None:
+            by_id[external_id].append(row.line)
+
+    duplicated = sorted(line for lines in by_id.values() if len(lines) > 1 for line in lines)
+    if not duplicated:
+        return
+
+    shown = ", ".join(f"line {line}" for line in duplicated[:_MAX_LINES_SHOWN])
+    more = (
+        ""
+        if len(duplicated) <= _MAX_LINES_SHOWN
+        else f" and {len(duplicated) - _MAX_LINES_SHOWN} more"
+    )
+    raise ValidationError(
+        f"{len(duplicated)} row(s) share a transaction id with another row "
+        f"in this file: {shown}{more}. Each row needs its own id; fix the "
+        f"file and preview it again."
+    )
+
+
 def plan_records(
     preview: ImportPreview,
     *,
@@ -137,6 +172,8 @@ def plan_records(
                 f"it: {shown}{more}. A row without a stable id cannot be told apart "
                 f"from one already stored."
             )
+
+        _refuse_duplicate_ids(preview.rows, preview.mapping.external_id)
 
     if mode is ImportMode.SNAPSHOT:
         if window is None:
