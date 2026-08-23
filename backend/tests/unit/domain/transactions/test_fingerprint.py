@@ -66,3 +66,31 @@ def test_negative_sub_cent_hashes_as_positive_zero() -> None:
     """PostgreSQL NUMERIC has no -0.00, so hashing the signed form would
     produce a fingerprint unrecomputable from the row it is stored beside."""
     assert _fp(amount=Money.parse("-0.001")) == _fp(amount=Money.parse("0.00"))
+
+
+def test_golden_vector_pins_the_exact_digest() -> None:
+    """Every other test in this file is relative: `_fp(a) == _fp(b)`. None of
+    them would notice `_DELIMITER` changing, the payload fields being
+    reordered, or the digest function being swapped — reordering
+    `str(account_id), posted_on.isoformat(), normalised_merchant, f"{value:.2f}",
+    quantised.currency` still satisfies every equality/inequality assertion
+    above, because both sides of each comparison reorder together.
+
+    This test pins one fixed input to its literal SHA-256-derived digest, so a
+    change to the payload shape or the hash itself shows up here even though
+    it satisfies every relative assertion elsewhere in this file.
+
+    If this literal ever needs to change, every fingerprint already stored in
+    the database was computed by the old algorithm and is now wrong under the
+    new one: `FINGERPRINT_VERSION` must be bumped alongside the change (see
+    the module docstring in `fingerprint.py`), and existing rows re-fingerprinted.
+    A green run of this test with an unbumped `FINGERPRINT_VERSION` means the
+    algorithm changed without anyone noticing the identity broke.
+    """
+    digest = compute_fingerprint(
+        account_id=ACCOUNT,
+        posted_on=date(2026, 8, 17),
+        normalised_merchant="BLUE BOTTLE",
+        amount=Money.parse("-4.50"),
+    )
+    assert digest == "c3e7f5b709d9debd5c00dc95fbf9c437"
