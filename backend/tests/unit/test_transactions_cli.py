@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from offerdelta.config import get_settings
+from offerdelta.infrastructure.postgres import engine as pg_engine
 from transactions import build_parser, main
 
 HEADER = "Date,Description,Amount\n"
@@ -140,6 +141,39 @@ def test_commit_prints_the_summary_even_with_yes(
     assert "snapshot" in out
     assert "2026-08-01" in out
     assert "2026-08-31" in out
+
+
+def test_commit_reports_a_missing_connection_string_without_a_traceback(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """get_engine() raises RuntimeError when CONNECTION_STRING is unset; main()
+    must turn that into a clean message and a non-zero exit, not an uncaught
+    traceback. Needs no database: the RuntimeError fires before any connection
+    is attempted, while building the engine's DSN.
+    """
+    monkeypatch.setenv("CONNECTION_STRING", "")
+    get_settings.cache_clear()
+    pg_engine.get_engine.cache_clear()
+    try:
+        code = main(
+            [
+                "commit",
+                str(_file(tmp_path)),
+                "--account=checking",
+                "--mode=snapshot",
+                "--from=2026-08-01",
+                "--to=2026-08-31",
+                "--yes",
+            ]
+        )
+        out = capsys.readouterr().out
+    finally:
+        get_settings.cache_clear()
+        pg_engine.get_engine.cache_clear()
+
+    assert code == 1
+    assert "CONNECTION_STRING" in out
+    assert "Traceback" not in out
 
 
 def test_commit_refuses_when_stdin_gives_no_input(

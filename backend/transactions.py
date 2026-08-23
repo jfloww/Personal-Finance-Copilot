@@ -27,9 +27,11 @@ import sys
 from datetime import date
 from pathlib import Path
 
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from offerdelta.application.transactions.import_transactions import ImportRequest, import_csv
+from offerdelta.config import get_settings
 from offerdelta.domain.common.errors import ValidationError
 from offerdelta.infrastructure.postgres.engine import get_engine
 from offerdelta.infrastructure.postgres.repositories import AccountRepository
@@ -166,8 +168,20 @@ def main(argv: list[str]) -> int:
             print(f"already stored {outcome.result.already_stored_count}: source lines {lines}")
         return 0
 
-    except ValidationError as error:
-        print(error)
+    except (ValidationError, RuntimeError, SQLAlchemyError) as error:
+        if isinstance(error, SQLAlchemyError):
+            # A SQLAlchemy exception can echo connection details and the SQL
+            # that was running -- real amounts and descriptions included.
+            # config.py promises the DSN is never logged, echoed, or put in
+            # an error message; only the redacted host is named here,
+            # nothing else from the exception.
+            host = get_settings().redacted_dsn
+            print(f"database error while reaching {host}; the operation did not complete")
+        else:
+            # ValidationError's message is always safe. RuntimeError here is
+            # get_engine() finding CONNECTION_STRING unset; that message also
+            # names no host and no SQL, so it is safe to print as-is too.
+            print(error)
         return 1
 
 
