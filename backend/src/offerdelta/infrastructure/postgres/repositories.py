@@ -9,10 +9,11 @@ overwriting — an audit record you can quietly replace is not an audit record.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -31,7 +32,7 @@ from offerdelta.infrastructure.postgres.models import (
     ResultComponentRow,
     TransactionRow,
 )
-from offerdelta.ingest.commit import ImportPlan
+from offerdelta.infrastructure.postgres.records import TransactionRecord
 
 
 @dataclass(frozen=True)
@@ -52,17 +53,30 @@ class StoredRun:
 
 
 @dataclass(frozen=True)
+class StoredAccount:
+    """A registered account."""
+
+    id: uuid.UUID
+    key: str
+    display_name: str
+    created_at: datetime
+
+
+@dataclass(frozen=True)
 class StoredTransaction:
     """An imported bank row as it came back from storage."""
 
     id: uuid.UUID
     imported_at: datetime
     account_id: uuid.UUID
+    batch_id: uuid.UUID | None
     posted_on: date
     description: str
     normalised_merchant: str
     amount: Money
+    external_id: str | None
     fingerprint: str
+    fingerprint_version: int
     occurrence: int
     source_file: str | None
     source_line: int | None
@@ -98,24 +112,6 @@ class TransactionImportResult:
 def _quantised(amount: Money) -> Money:
     """Persistence is a rounding boundary; the policy is recorded alongside."""
     return amount.quantize(CURRENCY_DISPLAY)
-
-
-def _resolve_account(session: Session, name: str, *, now: datetime) -> uuid.UUID:
-    """Find the account this import belongs to, registering it on first sight.
-
-    Interim: Task 6 gives account registration an explicit step of its own.
-    Until then the foreign key still has to point at a real row, and minting a
-    fresh account per import would defeat the very constraint it feeds.
-    """
-    key = canonical_account_key(name)
-    existing = session.scalar(select(AccountRow.id).where(AccountRow.key == key))
-    if existing is not None:
-        return existing
-
-    identifier = uuid.uuid4()
-    session.add(AccountRow(id=identifier, key=key, display_name=name.strip(), created_at=now))
-    session.flush()
-    return identifier
 
 
 class ComparisonRunRepository:
@@ -215,86 +211,134 @@ class ComparisonRunRepository:
         return len(self._session.scalars(select(ComparisonRunRow.id)).all())
 
 
+class AccountRepository:
+    """Accounts exist because somebody registered them, never by accident.
+
+    An import against an unknown account is refused rather than auto-creating
+    one: auto-creation relocates the original bug instead of fixing it, since a
+    typo still silently produces a second parallel account.
+    """
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def register(self, display_name: str, *, now: datetime | None = None) -> StoredAccount:
+        key = canonical_account_key(display_name)
+        if self.by_key(key) is not None:
+            raise ValidationError(f"account {key!r} is already registered")
+        row = AccountRow(
+            id=uuid.uuid4(),
+            key=key,
+            display_name=display_name.strip(),
+            created_at=now or datetime.now(UTC),
+        )
+        self._session.add(row)
+        try:
+            self._session.flush()
+        except IntegrityError as error:
+            raise ValidationError(f"account {key!r} is already registered") from error
+        return _to_stored_account(row)
+
+    def by_key(self, key: str) -> StoredAccount | None:
+        row = self._session.scalars(
+            select(AccountRow).where(AccountRow.key == canonical_account_key(key))
+        ).one_or_none()
+        return None if row is None else _to_stored_account(row)
+
+    def all(self) -> list[StoredAccount]:
+        rows = self._session.scalars(select(AccountRow).order_by(AccountRow.key)).all()
+        return [_to_stored_account(row) for row in rows]
+
+
+def _to_stored_account(row: AccountRow) -> StoredAccount:
+    return StoredAccount(
+        id=row.id, key=row.key, display_name=row.display_name, created_at=row.created_at
+    )
+
+
 class TransactionRepository:
     """Stores inspected bank rows without collapsing real duplicate charges."""
 
     def __init__(self, session: Session) -> None:
         self._session = session
 
-    def import_plan(
+    def add_many(
         self,
-        plan: ImportPlan,
+        records: Sequence[TransactionRecord],
         *,
+        batch_id: uuid.UUID | None = None,
         now: datetime | None = None,
     ) -> TransactionImportResult:
-        """Write new occurrence identities and report every stored match.
+        """Write new identities and report every stored match.
 
-        The unique constraint is the final concurrency guard. The read first is
-        what turns an ordinary re-import into a useful result instead of an
-        exception; a genuinely concurrent import still fails the whole unit of
-        work rather than leaving a partial batch behind.
+        The read-first is what turns an ordinary re-import into a useful report
+        instead of an exception; the unique constraint remains the final
+        concurrency guard.
         """
-        # Interim: Task 6 replaces this method with a record-based write path
-        # that carries a batch and an external id. What it must not do in the
-        # meantime is stamp a fingerprint_version onto a hash no version of
-        # the fingerprint ever produced, so identity comes from the domain
-        # function the column is named after.
-        imported_at = now or datetime.now(UTC)
-        account_id = _resolve_account(self._session, plan.account, now=imported_at)
-        keys = [
-            compute_fingerprint(
-                account_id=account_id,
-                posted_on=planned.row.posted_on,
-                normalised_merchant=planned.row.normalised_merchant,
-                amount=planned.row.amount,
-            )
-            for planned in plan.rows
-        ]
+        if not records:
+            return TransactionImportResult(attempted_count=0, imported_ids=(), already_stored=())
+
+        account_id = records[0].account_id
+        fingerprints = {self._fingerprint(record) for record in records}
         existing = set(
             self._session.execute(
                 select(TransactionRow.fingerprint, TransactionRow.occurrence).where(
                     TransactionRow.account_id == account_id,
-                    TransactionRow.fingerprint.in_(set(keys)),
+                    TransactionRow.fingerprint.in_(fingerprints),
+                )
+            ).all()
+        )
+        existing_external = set(
+            self._session.scalars(
+                select(TransactionRow.external_id).where(
+                    TransactionRow.account_id == account_id,
+                    TransactionRow.external_id.is_not(None),
                 )
             ).all()
         )
 
         imported_ids: list[uuid.UUID] = []
         already_stored: list[AlreadyStoredTransaction] = []
+        imported_at = now or datetime.now(UTC)
 
-        for key, planned in zip(keys, plan.rows, strict=True):
-            row = planned.row
-            identity = (key, planned.occurrence)
-            if identity in existing:
+        for record in records:
+            fingerprint = self._fingerprint(record)
+            if record.external_id is not None:
+                seen = record.external_id in existing_external
+            else:
+                seen = (fingerprint, record.occurrence) in existing
+
+            if seen:
                 already_stored.append(
                     AlreadyStoredTransaction(
-                        source_line=row.line,
-                        fingerprint=key,
-                        occurrence=planned.occurrence,
+                        source_line=record.provenance.source_line if record.provenance else 0,
+                        fingerprint=fingerprint,
+                        occurrence=record.occurrence,
                     )
                 )
                 continue
 
             identifier = uuid.uuid4()
             imported_ids.append(identifier)
+            quantised = _quantised(record.amount)
             self._session.add(
                 TransactionRow(
                     id=identifier,
                     imported_at=imported_at,
-                    account_id=account_id,
-                    batch_id=None,
-                    posted_on=row.posted_on,
-                    description=row.description,
-                    normalised_merchant=row.normalised_merchant,
-                    currency=row.amount.currency,
-                    amount=_quantised(row.amount).amount,
-                    external_id=None,
-                    fingerprint=key,
+                    account_id=record.account_id,
+                    batch_id=batch_id,
+                    posted_on=record.posted_on,
+                    description=record.description,
+                    normalised_merchant=record.normalised_merchant,
+                    currency=quantised.currency,
+                    amount=quantised.amount,
+                    external_id=record.external_id,
+                    fingerprint=fingerprint,
                     fingerprint_version=FINGERPRINT_VERSION,
-                    occurrence=planned.occurrence,
-                    source_file=plan.source_file,
-                    source_line=row.line,
-                    raw_cells=dict(row.raw),
+                    occurrence=record.occurrence,
+                    source_file=record.provenance.source_file if record.provenance else None,
+                    source_line=record.provenance.source_line if record.provenance else None,
+                    raw_cells=dict(record.provenance.raw_cells) if record.provenance else None,
                 )
             )
 
@@ -308,29 +352,29 @@ class TransactionRepository:
                 ) from error
 
         return TransactionImportResult(
-            attempted_count=len(plan.rows),
+            attempted_count=len(records),
             imported_ids=tuple(imported_ids),
             already_stored=tuple(already_stored),
+        )
+
+    @staticmethod
+    def _fingerprint(record: TransactionRecord) -> str:
+        return compute_fingerprint(
+            account_id=record.account_id,
+            posted_on=record.posted_on,
+            normalised_merchant=record.normalised_merchant,
+            amount=record.amount,
         )
 
     def get(self, transaction_id: uuid.UUID) -> StoredTransaction | None:
         row = self._session.get(TransactionRow, transaction_id)
         return None if row is None else _to_stored_transaction(row)
 
-    def recent(self, *, account_id: uuid.UUID, limit: int = 20) -> list[StoredTransaction]:
-        rows = self._session.scalars(
-            select(TransactionRow)
-            .where(TransactionRow.account_id == account_id)
-            .order_by(TransactionRow.posted_on.desc(), TransactionRow.id)
-            .limit(limit)
-        ).all()
-        return [_to_stored_transaction(row) for row in rows]
-
     def count(self, *, account_id: uuid.UUID | None = None) -> int:
-        statement = select(TransactionRow.id)
+        statement = select(func.count()).select_from(TransactionRow)
         if account_id is not None:
             statement = statement.where(TransactionRow.account_id == account_id)
-        return len(self._session.scalars(statement).all())
+        return self._session.scalars(statement).one()
 
 
 def _to_stored(row: ComparisonRunRow) -> StoredRun:
@@ -354,13 +398,16 @@ def _to_stored_transaction(row: TransactionRow) -> StoredTransaction:
         id=row.id,
         imported_at=row.imported_at,
         account_id=row.account_id,
+        batch_id=row.batch_id,
         posted_on=row.posted_on,
         description=row.description,
         normalised_merchant=row.normalised_merchant,
         amount=Money(row.amount, row.currency),
+        external_id=row.external_id,
         fingerprint=row.fingerprint,
+        fingerprint_version=row.fingerprint_version,
         occurrence=row.occurrence,
         source_file=row.source_file,
         source_line=row.source_line,
-        raw_cells=None if row.raw_cells is None else dict(row.raw_cells),
+        raw_cells=dict(row.raw_cells) if row.raw_cells is not None else None,
     )

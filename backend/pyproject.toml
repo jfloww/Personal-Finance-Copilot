@@ -133,3 +133,9 @@ layers = [
     "offerdelta.domain",
 ]
 exhaustive = false
+
+[[tool.importlinter.contracts]]
+name = "Persistence does not depend on CSV ingest"
+type = "forbidden"
+source_modules = ["offerdelta.infrastructure"]
+forbidden_modules = ["offerdelta.ingest"]
