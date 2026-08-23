@@ -64,6 +64,49 @@ def test_incremental_without_an_external_id_is_refused(tmp_path: Path) -> None:
         plan_records(preview, account_id=ACCOUNT, mode=ImportMode.INCREMENTAL, window=None)
 
 
+def _preview_with_ids(tmp_path: Path, body: str) -> ImportPreview:
+    """A preview whose mapping names an id column.
+
+    Auto-detection never guesses `external_id` — there is no alias list for
+    it, unlike date/description/amount — so exercising incremental mode needs
+    an explicit `ColumnMapping`.
+    """
+    header = "Date,Description,Amount,TransactionId\n"
+    path = tmp_path / "aug.csv"
+    path.write_text(header + body, encoding="utf-8")
+    mapping = ColumnMapping(
+        date="Date", description="Description", amount="Amount", external_id="TransactionId"
+    )
+    return preview_csv(path, mapping=mapping, date_order=DateOrder.ISO)
+
+
+def test_incremental_refuses_a_row_with_a_blank_id_cell(tmp_path: Path) -> None:
+    """A sparse id column is a realistic export shape, not an edge case.
+
+    The column-level check above only proves the mapping *names* an id
+    column; it says nothing about whether every row actually carries one. A
+    row with a blank cell there has exactly the ambiguity incremental mode
+    exists to refuse, so it must be refused too, not silently downgraded to
+    fingerprint-based matching.
+    """
+    preview = _preview_with_ids(
+        tmp_path,
+        "2026-08-17,BLUE BOTTLE,-4.50,TXN-1\n2026-08-18,TRANSIT,-2.75,\n",
+    )
+    with pytest.raises(ValidationError, match="line 3"):
+        plan_records(preview, account_id=ACCOUNT, mode=ImportMode.INCREMENTAL, window=None)
+
+
+def test_incremental_with_every_row_id_populated_succeeds(tmp_path: Path) -> None:
+    preview = _preview_with_ids(
+        tmp_path,
+        "2026-08-17,BLUE BOTTLE,-4.50,TXN-1\n2026-08-18,TRANSIT,-2.75,TXN-2\n",
+    )
+    records = plan_records(preview, account_id=ACCOUNT, mode=ImportMode.INCREMENTAL, window=None)
+    assert [r.external_id for r in records] == ["TXN-1", "TXN-2"]
+    assert all(r.external_id is not None for r in records)
+
+
 def test_records_carry_provenance(tmp_path: Path) -> None:
     preview = _preview(tmp_path, "2026-08-17,BLUE BOTTLE,-4.50\n")
     records = plan_records(preview, account_id=ACCOUNT, mode=ImportMode.SNAPSHOT, window=AUGUST)

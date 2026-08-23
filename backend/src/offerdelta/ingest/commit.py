@@ -35,7 +35,7 @@ from typing import Final
 from offerdelta.domain.common.errors import ValidationError
 from offerdelta.domain.common.rounding import CURRENCY_DISPLAY
 from offerdelta.infrastructure.postgres.records import Provenance, TransactionRecord
-from offerdelta.ingest.preview import ImportPreview
+from offerdelta.ingest.preview import ImportPreview, ParsedRow
 
 #: How many offending lines to name before summarising the rest as "and N more".
 _MAX_LINES_SHOWN: Final = 10
@@ -66,6 +66,18 @@ class ImportWindow:
 
     def covers(self, day: date) -> bool:
         return self.start <= day <= self.end
+
+
+def _external_id(row: ParsedRow, column: str | None) -> str | None:
+    """The row's own bank id, or None when there is no column or no value.
+
+    A blank cell is not a stable id, so it collapses to the same "no id"
+    state as a mapping with no id column at all — the caller decides what
+    that means for the declared mode.
+    """
+    if not column:
+        return None
+    return (row.raw.get(column) or "").strip() or None
 
 
 def plan_records(
@@ -100,6 +112,31 @@ def plan_records(
             "Supply the bank's transaction id column with --map=external_id:<column>, "
             "or re-export a full window and use --mode=snapshot."
         )
+
+    if mode is ImportMode.INCREMENTAL:
+        # The check above only confirms the mapping *names* an id column, not
+        # that every row actually carries a value in it. A blank cell has
+        # exactly the ambiguity incremental mode exists to refuse: `add_many`
+        # falls back to (fingerprint, occurrence) for any record whose
+        # external_id is None, which is the fingerprint-only comparison this
+        # mode is supposed to have ruled out for every row it accepts.
+        blank = [
+            row.line
+            for row in preview.rows
+            if _external_id(row, preview.mapping.external_id) is None
+        ]
+        if blank:
+            shown = ", ".join(f"line {line}" for line in blank[:_MAX_LINES_SHOWN])
+            more = (
+                ""
+                if len(blank) <= _MAX_LINES_SHOWN
+                else f" and {len(blank) - _MAX_LINES_SHOWN} more"
+            )
+            raise ValidationError(
+                f"{len(blank)} row(s) have the transaction id column but no value in "
+                f"it: {shown}{more}. A row without a stable id cannot be told apart "
+                f"from one already stored."
+            )
 
     if mode is ImportMode.SNAPSHOT:
         if window is None:
@@ -137,9 +174,6 @@ def plan_records(
         normalised_amount = quantised_amount if quantised_amount else abs(quantised_amount)
         key = (row.posted_on, row.normalised_merchant, f"{normalised_amount:.2f}")
         seen[key] += 1
-        external_id = None
-        if preview.mapping.external_id:
-            external_id = (row.raw.get(preview.mapping.external_id) or "").strip() or None
         records.append(
             TransactionRecord(
                 account_id=account_id,
@@ -147,7 +181,7 @@ def plan_records(
                 description=row.description,
                 normalised_merchant=row.normalised_merchant,
                 amount=row.amount,
-                external_id=external_id,
+                external_id=_external_id(row, preview.mapping.external_id),
                 occurrence=seen[key],
                 provenance=Provenance(
                     source_file=source_file,
