@@ -31,8 +31,22 @@ out/
 # Project
 scratch/
 
-# Real annotation data stays local; the example file is committed as a template.
-backend/data/eval/transactions.csv
+# ---------------------------------------------------------------- financial data
+# Deny by default. A real bank or card export dropped anywhere under data/ must
+# not be committable, whatever it is named - the previous rule protected exactly
+# one filename, which only helps if you remember to use that filename. The two
+# committed files are re-allowed explicitly.
+backend/data/**
+!backend/data/**/
+!backend/data/eval/README.md
+!backend/data/eval/transactions.example.csv
+
+# Statement formats, wherever they land in the tree.
+*.ofx
+*.qfx
+*.qbo
+statements/
+
 
 # Subagent-driven-development scratch: ledgers, briefs, review packages.
 .superpowers/
