@@ -81,6 +81,36 @@ def test_the_identical_file_is_a_batch_level_no_op(session: Session, tmp_path: P
     assert second.batch.id == first.batch.id
 
 
+def test_a_file_that_changes_mid_read_is_refused(
+    session: Session, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The batch checksum must describe the bytes actually parsed.
+
+    `import_csv` now hashes the file both before and after `preview_csv`
+    reads it and refuses on a mismatch. Simulated here by making the two
+    calls to `file_sha256` return different values, standing in for the file
+    changing mid-read: if the digest recorded a *different* file than the one
+    whose rows were just written, a later import of the real file with that
+    real digest would be treated as an already-imported no-op - a batch that
+    silently never happened, with no report.
+    """
+    AccountRepository(session).register("Checking")
+    path = _file(tmp_path, "2026-08-17,BLUE BOTTLE,-4.50\n")
+
+    digests = iter(["digest-before-the-change", "digest-after-the-change"])
+    monkeypatch.setattr(
+        "offerdelta.application.transactions.import_transactions.file_sha256",
+        lambda _path: next(digests),
+    )
+
+    with pytest.raises(ValidationError, match="changed while it was being read"):
+        import_csv(session, _request(path))
+
+    account = AccountRepository(session).by_key("checking")
+    assert account is not None
+    assert TransactionRepository(session).count(account_id=account.id) == 0
+
+
 def test_snapshot_mode_refuses_a_mapped_external_id(session: Session, tmp_path: Path) -> None:
     """Carry-forward 2.
 

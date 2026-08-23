@@ -82,7 +82,26 @@ def import_csv(session: Session, request: ImportRequest) -> ImportOutcome:
             f"Register one with: transactions.py accounts add <display name>"
         )
 
+    # Bracket the parse with a digest on each side rather than hashing once,
+    # separately, after the fact. `preview_csv` opens and reads the file
+    # itself; if its bytes change anywhere inside that read, a digest taken
+    # only afterwards would record the *new* bytes against rows parsed from
+    # the *old* ones. The batch would then carry a checksum for a file that
+    # was never actually imported, and a later import of that real file
+    # becomes a silent, unrecoverable no-op - see this module's docstring,
+    # and `backend/transactions.py`'s, on why a second independent read
+    # cannot be trusted to agree with the first.
+    digest_before = file_sha256(request.path)
     preview = preview_csv(request.path, mapping=request.mapping, date_order=request.date_order)
+    digest_after = file_sha256(request.path)
+    if digest_after != digest_before:
+        raise ValidationError(
+            f"{request.path} changed while it was being read for this import "
+            f"(checksum {digest_before} before parsing, {digest_after} after); "
+            "the rows just parsed can no longer be trusted to match the file's "
+            "current bytes. Re-run the import once the file has stopped changing."
+        )
+
     records = plan_records(preview, account_id=account.id, mode=request.mode, window=request.window)
 
     # A batch's mode is recorded but, until now, never read back. Snapshot
@@ -113,7 +132,7 @@ def import_csv(session: Session, request: ImportRequest) -> ImportOutcome:
     batch, created = ImportBatchRepository(session).open(
         account.id,
         source_file=request.path.name,
-        source_sha256=file_sha256(request.path),
+        source_sha256=digest_after,
         mode=str(request.mode),
         window_start=request.window.start if request.window else None,
         window_end=request.window.end if request.window else None,
