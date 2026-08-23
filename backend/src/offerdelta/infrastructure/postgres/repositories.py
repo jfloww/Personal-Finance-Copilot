@@ -384,6 +384,31 @@ class TransactionRepository:
             ).all()
         )
 
+        # Incremental records carry a bank-supplied external_id, which is what
+        # actually decides identity below. Their occurrence is only numbered
+        # per file (starting at 1 again), so a genuinely new row can land on
+        # an occurrence already taken by a previously stored row with the
+        # same fingerprint and trip the unique constraint even though it is
+        # not a duplicate. Offsetting by the highest occurrence already
+        # stored for that fingerprint is safe only because external_id, not
+        # occurrence, is doing the deduplication here - occurrence only has
+        # to satisfy the constraint, not carry identity. Snapshot batches
+        # never carry an external_id, so this offset never applies to them.
+        offsets: dict[str, int] = {}
+        if any(record.external_id is not None for record in records):
+            rows = self._session.execute(
+                select(
+                    TransactionRow.fingerprint,
+                    func.max(TransactionRow.occurrence),
+                )
+                .where(
+                    TransactionRow.account_id == account_id,
+                    TransactionRow.fingerprint.in_(fingerprints),
+                )
+                .group_by(TransactionRow.fingerprint)
+            ).all()
+            offsets = {fingerprint: highest for fingerprint, highest in rows}  # noqa: C416
+
         imported_ids: list[uuid.UUID] = []
         already_stored: list[AlreadyStoredTransaction] = []
         imported_at = now or datetime.now(UTC)
@@ -405,6 +430,7 @@ class TransactionRepository:
                 )
                 continue
 
+            occurrence = record.occurrence + offsets.get(fingerprint, 0)
             identifier = uuid.uuid4()
             imported_ids.append(identifier)
             quantised = _quantised(record.amount)
@@ -422,7 +448,7 @@ class TransactionRepository:
                     external_id=record.external_id,
                     fingerprint=fingerprint,
                     fingerprint_version=FINGERPRINT_VERSION,
-                    occurrence=record.occurrence,
+                    occurrence=occurrence,
                     source_file=record.provenance.source_file if record.provenance else None,
                     source_line=record.provenance.source_line if record.provenance else None,
                     raw_cells=dict(record.provenance.raw_cells) if record.provenance else None,
