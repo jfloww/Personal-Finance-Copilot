@@ -485,7 +485,15 @@ class TransactionRepository:
                 )
                 continue
 
-            occurrence = record.occurrence + offsets.get(fingerprint, 0)
+            # Offsetting only makes sense for a record whose identity is its
+            # external_id: occurrence there only has to satisfy the unique
+            # constraint. For an id-less record, occurrence *is* its identity
+            # (paired with fingerprint), so shifting it would store the wrong
+            # identity outright, opening a gap a later real charge could fall
+            # into and be written a second time.
+            occurrence = record.occurrence + (
+                offsets.get(fingerprint, 0) if record.external_id is not None else 0
+            )
             identifier = uuid.uuid4()
             imported_ids.append(identifier)
             quantised = _quantised(record.amount)

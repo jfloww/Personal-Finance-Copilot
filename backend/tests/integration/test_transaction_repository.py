@@ -254,3 +254,51 @@ def test_a_mixed_batch_dedupes_each_record_by_its_own_rule(session: Session) -> 
     assert result.imported_count == 2
     assert result.already_stored_count == 2
     assert repo.count(account_id=account_id) == 4
+
+
+def test_an_id_less_record_sharing_a_fingerprint_keeps_its_planned_occurrence(
+    session: Session,
+) -> None:
+    """The offset built for an id-carrying record must not leak onto an id-less one.
+
+    A record with no external_id is identified by (fingerprint, occurrence)
+    alone - occurrence *is* its identity. Here the batch's id-less record
+    shares a fingerprint with an already-stored row (so the offset dict gets
+    a real, non-zero entry for that fingerprint) and lands on a genuinely new
+    occurrence of its own. If the offset built for the id-carrying record
+    sharing that fingerprint leaked onto it too, it would be stored at the
+    wrong occurrence, opening a gap: a later, genuinely-new charge could then
+    land on the skipped occurrence and be silently written again.
+    """
+    account_id = _account(session)
+    repo = TransactionRepository(session)
+
+    # Seed occurrence=1 for this fingerprint with no external_id, e.g. a
+    # prior snapshot-style row.
+    repo.add_many([_record(account_id, occurrence=1)])
+
+    batch = [
+        # Id-carrying, unrelated content: present only so the offset
+        # machinery activates for this batch at all (it is built whenever
+        # any record in the batch carries an external_id).
+        _record(
+            account_id,
+            merchant="NETFLIX",
+            amount="-15.99",
+            occurrence=1,
+            external_id="bank-ext-1",
+        ),
+        # Id-less, SAME fingerprint as the seeded row above, but a genuinely
+        # new charge planned at occurrence=2 (not already stored, since only
+        # occurrence=1 exists for this fingerprint). Its stored occurrence
+        # must be exactly 2, not 2 plus the offset computed for this
+        # fingerprint from the seeded row.
+        _record(account_id, occurrence=2),
+    ]
+    result = repo.add_many(batch)
+
+    assert result.imported_count == 2
+    stored = [repo.get(identifier) for identifier in result.imported_ids]
+    id_less = next(s for s in stored if s is not None and s.normalised_merchant == "BLUE BOTTLE")
+
+    assert id_less.occurrence == 2
