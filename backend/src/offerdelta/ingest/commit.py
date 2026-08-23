@@ -34,8 +34,8 @@ from typing import Final
 
 from offerdelta.domain.common.errors import ValidationError
 from offerdelta.domain.common.rounding import CURRENCY_DISPLAY
-from offerdelta.infrastructure.postgres.records import Provenance, TransactionRecord
 from offerdelta.ingest.preview import ImportPreview, ParsedRow
+from offerdelta.records.transactions import Provenance, TransactionRecord
 
 #: How many offending lines to name before summarising the rest as "and N more".
 _MAX_LINES_SHOWN: Final = 10

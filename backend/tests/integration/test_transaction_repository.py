@@ -18,11 +18,11 @@ from sqlalchemy.orm import Session
 
 from offerdelta.domain.common.errors import ValidationError
 from offerdelta.domain.common.money import Money
-from offerdelta.infrastructure.postgres.records import Provenance, TransactionRecord
 from offerdelta.infrastructure.postgres.repositories import (
     AccountRepository,
     TransactionRepository,
 )
+from offerdelta.records.transactions import Provenance, TransactionRecord
 from tests.integration.conftest import requires_database
 
 pytestmark = requires_database

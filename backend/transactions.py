@@ -109,6 +109,29 @@ def _confirm() -> bool:
     return answer.strip().lower() == "yes"
 
 
+def _report(error: ValidationError | RuntimeError | SQLAlchemyError) -> int:
+    """Say what went wrong without echoing anything we have not vetted.
+
+    `config.py` promises the connection string is never logged, echoed, or put
+    into an error message. A SQLAlchemy exception breaks that promise if
+    printed: it can carry the DSN and the SQL that was running, real amounts
+    and descriptions included. So only the redacted host is named, and nothing
+    from the exception itself.
+    """
+    if isinstance(error, SQLAlchemyError):
+        host = get_settings().redacted_dsn
+        print(f"database error while reaching {host}; the operation did not complete")
+    elif isinstance(error, RuntimeError) and get_settings().database_available:
+        # The RuntimeError we expect is get_engine() finding CONNECTION_STRING
+        # unset, whose message names no host and no SQL. Any other RuntimeError
+        # came from somewhere we have not reasoned about, so it is not echoed.
+        print("the operation did not complete; an unexpected internal error occurred")
+    else:
+        # A ValidationError's message is always ours, as is the unset-DSN one.
+        print(error)
+    return 1
+
+
 def main(argv: list[str]) -> int:
     args = build_parser().parse_args(argv)
 
@@ -169,20 +192,7 @@ def main(argv: list[str]) -> int:
         return 0
 
     except (ValidationError, RuntimeError, SQLAlchemyError) as error:
-        if isinstance(error, SQLAlchemyError):
-            # A SQLAlchemy exception can echo connection details and the SQL
-            # that was running -- real amounts and descriptions included.
-            # config.py promises the DSN is never logged, echoed, or put in
-            # an error message; only the redacted host is named here,
-            # nothing else from the exception.
-            host = get_settings().redacted_dsn
-            print(f"database error while reaching {host}; the operation did not complete")
-        else:
-            # ValidationError's message is always safe. RuntimeError here is
-            # get_engine() finding CONNECTION_STRING unset; that message also
-            # names no host and no SQL, so it is safe to print as-is too.
-            print(error)
-        return 1
+        return _report(error)
 
 
 if __name__ == "__main__":

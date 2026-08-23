@@ -33,7 +33,7 @@ from offerdelta.infrastructure.postgres.models import (
     ResultComponentRow,
     TransactionRow,
 )
-from offerdelta.infrastructure.postgres.records import TransactionRecord
+from offerdelta.records.transactions import TransactionRecord
 
 
 @dataclass(frozen=True)
@@ -408,6 +408,14 @@ class TransactionRepository:
         existing fingerprints and external ids scoped to one account_id, so a
         mixed batch would check records from every account but the first
         against the wrong account's history and silently miss real duplicates.
+
+        The caller must also not mix identity schemes on one account. Records
+        with an ``external_id`` are deduplicated against stored external ids
+        only, and rows written without one are invisible to that check - so
+        importing a charge incrementally that was already stored from a
+        snapshot writes it twice, silently. ``import_csv`` refuses a mode change
+        per account for exactly this reason; a caller reaching this method
+        directly inherits the obligation, not the protection.
         """
         if not records:
             return TransactionImportResult(attempted_count=0, imported_ids=(), already_stored=())
