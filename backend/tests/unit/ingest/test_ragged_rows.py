@@ -78,3 +78,39 @@ def test_line_numbers_are_physical_for_ordinary_files(tmp_path: Path) -> None:
     preview = preview_csv(path, date_order=DateOrder.ISO)
 
     assert [row.line for row in preview.rows] == [2, 3, 4]
+
+
+def test_blank_separator_lines_do_not_desynchronise_line_numbers(tmp_path: Path) -> None:
+    """`csv.DictReader` silently skips blank rows; every skip must still count.
+
+    Bank exports routinely carry blank separator or trailing lines. Without
+    accounting for the skip, each blank line shifts every later row's
+    recorded line number backwards by one — the audit trail then points at
+    the wrong physical row.
+    """
+    path = _write(
+        tmp_path,
+        "\n2026-08-17,BLUE BOTTLE,-4.50\n\n\n2026-08-18,TRANSIT,-2.75\n",
+    )
+    preview = preview_csv(path, date_order=DateOrder.ISO)
+
+    assert len(preview.rows) == 2
+    # header is line 1; line 2 is blank; the first record is line 3
+    assert preview.rows[0].line == 3
+    # lines 4 and 5 are blank; the second record is line 6
+    assert preview.rows[1].line == 6
+
+
+def test_blank_lines_and_an_embedded_newline_compose_correctly(tmp_path: Path) -> None:
+    """Both desynchronising forces at once, so neither fix can regress the other."""
+    path = _write(
+        tmp_path,
+        '\n2026-08-17,"MEMO\nSECOND LINE",-4.50\n\n2026-08-19,BLUE BOTTLE,-3.00\n',
+    )
+    preview = preview_csv(path, date_order=DateOrder.ISO)
+
+    assert len(preview.rows) == 2
+    # header=1, blank=2, the quoted record starts at line 3 and spans 3-4
+    assert preview.rows[0].line == 3
+    # line 5 is blank; the next record starts at line 6
+    assert preview.rows[1].line == 6

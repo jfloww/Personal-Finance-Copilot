@@ -184,17 +184,30 @@ def preview_csv(
         raise ValidationError(f"no file at {path}")
 
     with path.open(encoding="utf-8-sig", newline="") as handle:
-        reader = csv.DictReader(handle, restkey=_RESTKEY, restval=_RESTVAL)
-        headers = tuple(reader.fieldnames or ())
-        # `fieldnames` forces the header read, so line_num now points at the
-        # last physical line the header occupied — usually 1.
+        # A raw `csv.reader`, not `csv.DictReader`: `DictReader.__next__` skips
+        # blank physical lines *inside itself*, looping past them before it
+        # ever returns — which hides how many lines were skipped from anyone
+        # tracking `line_num` from the outside. Every skip has to stay visible
+        # here, or the next real row's recorded line drifts backwards by one
+        # for each blank line already consumed.
+        reader = csv.reader(handle)
+        headers = tuple(next(reader, ()))
+        # `next` forces the header read, so line_num now points at the last
+        # physical line the header occupied — usually 1.
         previous_line = reader.line_num
-        # `str | list[str]`, not `str`: csv.DictReader puts every surplus cell
-        # under `_RESTKEY` as a list, which is exactly the shape `_reject_ragged`
+        # `str | list[str]`, not `str`: a surplus cell is recorded under
+        # `_RESTKEY` as a list, which is exactly the shape `_reject_ragged`
         # and `_displayable` below are written to detect.
         numbered: list[tuple[int, dict[str, str | list[str]]]] = []
-        for record in reader:
-            numbered.append((previous_line + 1, record))
+        for raw_row in reader:
+            if raw_row == []:
+                # A genuinely blank physical line. Update the baseline and
+                # move on without recording anything — same as
+                # `DictReader.__next__` — but here the skip is visible, so it
+                # is accounted for before the *next* row's line is computed.
+                previous_line = reader.line_num
+                continue
+            numbered.append((previous_line + 1, _zip_row(headers, raw_row)))
             previous_line = reader.line_num
 
     rows = [record for _, record in numbered]
@@ -266,6 +279,24 @@ def _sample_value(value: str | list[str] | None) -> str:
     if value is None or isinstance(value, list) or value == _RESTVAL:
         return ""
     return value
+
+
+def _zip_row(headers: tuple[str, ...], row: list[str]) -> dict[str, str | list[str]]:
+    """Pair a raw row with the header, exactly as `csv.DictReader` would.
+
+    Reimplemented rather than reused: `DictReader.__next__` is where the
+    blank-line skipping this module needs to see happens, so the header-zip
+    and restkey/restval logic it also does has to move out here with it.
+    """
+    # `strict=False`: a mismatched length is exactly what a ragged row is —
+    # handled below via `_RESTKEY`/`_RESTVAL`, not an error at zip time.
+    record: dict[str, str | list[str]] = dict(zip(headers, row, strict=False))
+    if len(row) > len(headers):
+        record[_RESTKEY] = row[len(headers) :]
+    elif len(row) < len(headers):
+        for header in headers[len(row) :]:
+            record[header] = _RESTVAL
+    return record
 
 
 def _reject_ragged(row: dict[str, str | list[str]]) -> None:
