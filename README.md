@@ -267,12 +267,14 @@ uv run python transactions.py commit statement.csv \
 
 Commit an append-only export in **incremental** mode. This needs the bank's own transaction id
 column mapped in, because without a stable id there is no way to tell a genuine repeat charge from
-one already stored:
+one already stored. `--map` replaces detection entirely rather than adding to it, so every field the
+importer needs — `date`, `description`, `amount` — has to be named alongside `external_id`, not just
+the new one:
 
 ```bash
 uv run python transactions.py commit new-activity.csv \
   --account=chase-checking --mode=incremental \
-  --map=external_id:TransactionID --yes
+  --map=date:Date,description:Description,amount:Amount,external_id:TransactionID --yes
 ```
 
 Chase exports carry no stable id, so Chase files use snapshot mode with an explicit window.
