@@ -29,6 +29,7 @@ from offerdelta.domain.transactions.fingerprint import (
 from offerdelta.infrastructure.postgres.models import (
     AccountRow,
     ComparisonRunRow,
+    ImportBatchRow,
     ResultComponentRow,
     TransactionRow,
 )
@@ -60,6 +61,21 @@ class StoredAccount:
     key: str
     display_name: str
     created_at: datetime
+
+
+@dataclass(frozen=True)
+class StoredBatch:
+    """One recorded import of one file."""
+
+    id: uuid.UUID
+    account_id: uuid.UUID
+    source_file: str
+    source_sha256: str
+    mode: str
+    window_start: date | None
+    window_end: date | None
+    row_count: int
+    imported_at: datetime
 
 
 @dataclass(frozen=True)
@@ -253,6 +269,64 @@ class AccountRepository:
 def _to_stored_account(row: AccountRow) -> StoredAccount:
     return StoredAccount(
         id=row.id, key=row.key, display_name=row.display_name, created_at=row.created_at
+    )
+
+
+class ImportBatchRepository:
+    """Batches make a re-import of the same bytes provably a no-op."""
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def open(
+        self,
+        account_id: uuid.UUID,
+        *,
+        source_file: str,
+        source_sha256: str,
+        mode: str,
+        window_start: date | None,
+        window_end: date | None,
+        row_count: int,
+        now: datetime | None = None,
+    ) -> tuple[StoredBatch, bool]:
+        """Return the batch and whether it was newly created."""
+        existing = self._session.scalars(
+            select(ImportBatchRow).where(
+                ImportBatchRow.account_id == account_id,
+                ImportBatchRow.source_sha256 == source_sha256,
+            )
+        ).one_or_none()
+        if existing is not None:
+            return _to_stored_batch(existing), False
+
+        row = ImportBatchRow(
+            id=uuid.uuid4(),
+            account_id=account_id,
+            source_file=source_file,
+            source_sha256=source_sha256,
+            mode=mode,
+            window_start=window_start,
+            window_end=window_end,
+            row_count=row_count,
+            imported_at=now or datetime.now(UTC),
+        )
+        self._session.add(row)
+        self._session.flush()
+        return _to_stored_batch(row), True
+
+
+def _to_stored_batch(row: ImportBatchRow) -> StoredBatch:
+    return StoredBatch(
+        id=row.id,
+        account_id=row.account_id,
+        source_file=row.source_file,
+        source_sha256=row.source_sha256,
+        mode=row.mode,
+        window_start=row.window_start,
+        window_end=row.window_end,
+        row_count=row.row_count,
+        imported_at=row.imported_at,
     )
 
 
