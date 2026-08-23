@@ -9,13 +9,15 @@ The real API arrives in milestone 5.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Annotated, Final
 
-from fastapi import FastAPI, Header, HTTPException, Response
+from fastapi import Depends, FastAPI, Header, HTTPException, Response, status
 from fastapi.responses import FileResponse
+from sqlalchemy.orm import Session
 
 from offerdelta.api.presenters import present_comparison
 from offerdelta.api.schemas import (
@@ -23,13 +25,22 @@ from offerdelta.api.schemas import (
     ComparisonSchema,
     DerivationNodeSchema,
     HealthSchema,
+    TransactionEntrySchema,
+    TransactionStoredSchema,
     VersionSchema,
 )
 from offerdelta.application.idempotency import IdempotencyOutcome, IdempotencyService
 from offerdelta.application.queries.get_demo_comparison import get_demo_comparison
 from offerdelta.application.queries.get_demo_derivation import get_demo_derivation
+from offerdelta.application.transactions.enter_transaction import (
+    ManualEntry,
+    enter_transaction,
+)
 from offerdelta.domain.common.errors import ValidationError
+from offerdelta.domain.transactions.fingerprint import FINGERPRINT_VERSION
+from offerdelta.domain.transactions.parsing import parse_amount
 from offerdelta.infrastructure.memory.idempotency import InMemoryIdempotencyStore
+from offerdelta.infrastructure.postgres.engine import get_engine
 
 #: Bumped whenever a calculation rule changes. Every result will reference it
 #: once results are persisted, so a stored figure stays reproducible.
@@ -161,3 +172,65 @@ def run_comparison(
 
     response.status_code = 201
     return Response(content=payload, status_code=201, media_type="application/json")
+
+
+def _session() -> Iterator[Session]:
+    """One request, one transaction.
+
+    Committed only when the handler returns. A handler that raises leaves
+    nothing behind, which is the property the whole import path is built on and
+    the reason manual entry does not get its own weaker rule.
+    """
+    with Session(get_engine()) as session:
+        yield session
+        session.commit()
+
+
+@app.post(
+    "/v1/transactions",
+    response_model=TransactionStoredSchema,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_transaction(
+    body: TransactionEntrySchema, session: Annotated[Session, Depends(_session)]
+) -> TransactionStoredSchema:
+    """Enter one transaction by hand.
+
+    409 rather than a silent success when a matching transaction already
+    exists: the caller asked for something that is already true, and telling
+    them so is the difference between a duplicate they can see and one they
+    cannot. `repeat` is how they say they meant it.
+    """
+    try:
+        amount = parse_amount(body.amount)
+    except ValidationError as error:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error)) from error
+
+    entry = ManualEntry(
+        account_key=body.account_key,
+        posted_on=body.posted_on,
+        description=body.description,
+        amount=amount,
+        repeat=body.repeat,
+    )
+
+    try:
+        outcome = enter_transaction(session, entry)
+    except ValidationError as error:
+        # The only ValidationError this path raises is an unknown account, and
+        # its message names the registered ones.
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(error)) from error
+
+    if not outcome.stored:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"{outcome.already_stored_count} identical transaction(s) already stored; "
+            f"set repeat=true if there really was another one",
+        )
+
+    return TransactionStoredSchema(
+        transaction_id=str(outcome.transaction_id),
+        fingerprint=outcome.fingerprint,
+        fingerprint_version=FINGERPRINT_VERSION,
+        occurrence=outcome.occurrence,
+    )

@@ -144,3 +144,40 @@ class VersionSchema(BaseModel):
 
 class HealthSchema(BaseModel):
     status: str
+
+
+class TransactionEntrySchema(BaseModel):
+    """One hand-entered transaction, as it arrives on the wire.
+
+    `amount` is a string for the reason at the top of this module: a browser
+    parsing `-4.50` as a JSON number turns an exact decimal into an IEEE 754
+    approximation, and this is a product whose premise is that its numbers can
+    be trusted. It is parsed with the same `parse_amount` the CSV importer
+    uses, so `$1,234.56` and `(45.00)` mean here what they mean there.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    account_key: str = Field(min_length=1)
+    posted_on: date
+    description: str = Field(min_length=1)
+    amount: str = Field(description="Signed decimal string. Negative is money out.")
+    repeat: bool = Field(
+        default=False,
+        description=(
+            "Assert that this really is another identical charge rather than a "
+            "re-entry of one already stored. Without it, a matching transaction "
+            "is reported and nothing is written."
+        ),
+    )
+
+
+class TransactionStoredSchema(BaseModel):
+    """What was written."""
+
+    model_config = ConfigDict(frozen=True)
+
+    transaction_id: str
+    fingerprint: str
+    fingerprint_version: int
+    occurrence: int

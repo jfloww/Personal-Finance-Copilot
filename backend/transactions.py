@@ -24,15 +24,18 @@ from __future__ import annotations
 
 import argparse
 import sys
+from collections.abc import Callable
 from datetime import date
 from pathlib import Path
 
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from offerdelta.application.transactions.enter_transaction import ManualEntry, enter_transaction
 from offerdelta.application.transactions.import_transactions import ImportRequest, import_csv
 from offerdelta.config import get_settings
 from offerdelta.domain.common.errors import ValidationError
+from offerdelta.domain.transactions.parsing import parse_amount
 from offerdelta.infrastructure.postgres.engine import get_engine
 from offerdelta.infrastructure.postgres.repositories import AccountRepository
 from offerdelta.ingest.commit import ImportMode, ImportWindow
@@ -80,6 +83,18 @@ def build_parser() -> argparse.ArgumentParser:
     commit.add_argument("--map", dest="mapping", type=_mapping, default=None)
     commit.add_argument("--dates", dest="dates", choices=[o.value for o in DateOrder], default=None)
     commit.add_argument("--yes", action="store_true", help="confirm the write")
+
+    add = sub.add_parser("add", help="enter one transaction by hand; requires --yes")
+    add.add_argument("--account", required=True)
+    add.add_argument("--date", dest="posted_on", required=True, type=date.fromisoformat)
+    add.add_argument("--description", required=True)
+    add.add_argument("--amount", required=True, help="signed; negative is money out")
+    add.add_argument(
+        "--repeat",
+        action="store_true",
+        help="this really is another identical charge, not a re-entry of one already stored",
+    )
+    add.add_argument("--yes", action="store_true", help="confirm the write")
 
     accounts = sub.add_parser("accounts", help="register and list accounts")
     accounts_sub = accounts.add_subparsers(dest="accounts_command", required=True)
@@ -132,65 +147,122 @@ def _report(error: ValidationError | RuntimeError | SQLAlchemyError) -> int:
     return 1
 
 
-def main(argv: list[str]) -> int:
-    args = build_parser().parse_args(argv)
+def _add(args: argparse.Namespace) -> int:
+    """Write one hand-entered transaction behind the same gate as an import."""
+    entry = ManualEntry(
+        account_key=args.account,
+        posted_on=args.posted_on,
+        description=args.description,
+        amount=parse_amount(args.amount),
+        repeat=args.repeat,
+    )
 
-    try:
-        if args.command == "preview":
-            preview = preview_csv(
-                args.file,
+    summary = (
+        f"{entry.posted_on} {entry.description} {entry.amount.amount:.2f} "
+        f"-> account {entry.account_key}" + (" (repeat)" if entry.repeat else "")
+    )
+    print(summary)
+    if not args.yes and not _confirm():
+        return 2
+
+    with Session(get_engine()) as session:
+        outcome = enter_transaction(session, entry)
+        session.commit()
+
+    if not outcome.stored:
+        print(
+            f"already stored: {outcome.already_stored_count} identical "
+            f"transaction(s) exist. Pass --repeat if there really was another one."
+        )
+        return 1
+
+    print(f"stored occurrence {outcome.occurrence} ({outcome.transaction_id})")
+    return 0
+
+
+def _accounts(args: argparse.Namespace) -> int:
+    """Register an account, or list the ones that exist.
+
+    Registration is deliberately its own command: an import refuses an unknown
+    account rather than creating one, because a typo that auto-creates is the
+    original bug wearing a different hat.
+    """
+    with Session(get_engine()) as session:
+        repo = AccountRepository(session)
+        if args.accounts_command == "add":
+            account = repo.register(args.display_name)
+            session.commit()
+            print(f"created {account.key}  ({account.display_name})")
+        else:
+            for account in repo.all():
+                print(f"{account.key:<24}{account.display_name}")
+    return 0
+
+
+def _preview(args: argparse.Namespace) -> int:
+    """Show what an import would do. Writes nothing, ever."""
+    preview = preview_csv(
+        args.file,
+        mapping=args.mapping,
+        date_order=DateOrder(args.dates) if args.dates else None,
+    )
+    print(preview.render())
+    return 0 if preview.importable else 1
+
+
+def _commit(args: argparse.Namespace) -> int:
+    """Write an import, behind the summary and the confirmation gate."""
+    window = None
+    if args.window_start is not None and args.window_end is not None:
+        window = ImportWindow(start=args.window_start, end=args.window_end)
+
+    summary = f"{args.file.name} -> account {args.account}, mode {args.mode}" + (
+        f", window {args.window_start} to {args.window_end}" if window else ""
+    )
+    print(summary)
+    if not args.yes and not _confirm():
+        return 2
+
+    with Session(get_engine()) as session:
+        outcome = import_csv(
+            session,
+            ImportRequest(
+                path=args.file,
+                account_key=args.account,
+                mode=ImportMode(args.mode),
+                window=window,
                 mapping=args.mapping,
                 date_order=DateOrder(args.dates) if args.dates else None,
-            )
-            print(preview.render())
-            return 0 if preview.importable else 1
-
-        if args.command == "accounts":
-            with Session(get_engine()) as session:
-                repo = AccountRepository(session)
-                if args.accounts_command == "add":
-                    account = repo.register(args.display_name)
-                    session.commit()
-                    print(f"created {account.key}  ({account.display_name})")
-                else:
-                    for account in repo.all():
-                        print(f"{account.key:<24}{account.display_name}")
-                return 0
-
-        window = None
-        if args.window_start is not None and args.window_end is not None:
-            window = ImportWindow(start=args.window_start, end=args.window_end)
-
-        summary = f"{args.file.name} -> account {args.account}, mode {args.mode}" + (
-            f", window {args.window_start} to {args.window_end}" if window else ""
+            ),
         )
-        print(summary)
-        if not args.yes and not _confirm():
-            return 2
+        session.commit()
 
-        with Session(get_engine()) as session:
-            outcome = import_csv(
-                session,
-                ImportRequest(
-                    path=args.file,
-                    account_key=args.account,
-                    mode=ImportMode(args.mode),
-                    window=window,
-                    mapping=args.mapping,
-                    date_order=DateOrder(args.dates) if args.dates else None,
-                ),
-            )
-            session.commit()
-
-        if not outcome.created:
-            print(f"already imported: identical file, batch {outcome.batch.id}")
-            return 0
-        print(f"committed {outcome.result.imported_count} of {outcome.result.attempted_count} rows")
-        if outcome.result.already_stored_count:
-            lines = ", ".join(str(a.source_line) for a in outcome.result.already_stored[:20])
-            print(f"already stored {outcome.result.already_stored_count}: source lines {lines}")
+    if not outcome.created:
+        print(f"already imported: identical file, batch {outcome.batch.id}")
         return 0
+    print(f"committed {outcome.result.imported_count} of {outcome.result.attempted_count} rows")
+    if outcome.result.already_stored_count:
+        lines = ", ".join(str(a.source_line) for a in outcome.result.already_stored[:20])
+        print(f"already stored {outcome.result.already_stored_count}: source lines {lines}")
+    return 0
 
+
+def main(argv: list[str]) -> int:
+    """Parse, dispatch, and turn any expected failure into an exit code.
+
+    Each subcommand is its own function so this stays a dispatcher: the branch
+    count here tracks the number of commands, not the work any of them does.
+    """
+    args = build_parser().parse_args(argv)
+    handlers: dict[str, Callable[[argparse.Namespace], int]] = {
+        "preview": _preview,
+        "add": _add,
+        "accounts": _accounts,
+        "commit": _commit,
+    }
+
+    try:
+        return handlers[args.command](args)
     except (ValidationError, RuntimeError, SQLAlchemyError) as error:
         return _report(error)
 

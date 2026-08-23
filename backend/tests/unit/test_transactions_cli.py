@@ -200,3 +200,79 @@ def test_commit_refuses_when_stdin_gives_no_input(
 
     assert code != 0
     assert "refusing to write" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------- add
+
+
+def test_add_requires_every_field() -> None:
+    parser = build_parser()
+    for missing in (
+        ["add", "--date=2026-08-17", "--description=x", "--amount=-1"],
+        ["add", "--account=checking", "--description=x", "--amount=-1"],
+        ["add", "--account=checking", "--date=2026-08-17", "--amount=-1"],
+        ["add", "--account=checking", "--date=2026-08-17", "--description=x"],
+    ):
+        with pytest.raises(SystemExit):
+            parser.parse_args(missing)
+
+
+def test_add_rejects_a_bad_date() -> None:
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(
+            ["add", "--account=checking", "--date=17/08/2026", "--description=x", "--amount=-1"]
+        )
+
+
+def test_add_rejects_an_unknown_flag() -> None:
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(
+            [
+                "add",
+                "--account=checking",
+                "--date=2026-08-17",
+                "--description=x",
+                "--amount=-1",
+                "--force",
+            ]
+        )
+
+
+def test_add_writes_nothing_without_yes(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Same gate as commit: a write cannot happen by accident."""
+    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+    code = main(
+        [
+            "add",
+            "--account=checking",
+            "--date=2026-08-17",
+            "--description=Blue Bottle",
+            "--amount=-4.50",
+        ]
+    )
+    out = capsys.readouterr().out
+    assert code != 0
+    assert "refusing to write" in out
+
+
+def test_add_prints_the_summary_before_asking(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+    main(
+        [
+            "add",
+            "--account=checking",
+            "--date=2026-08-17",
+            "--description=Blue Bottle",
+            "--amount=-4.50",
+            "--repeat",
+        ]
+    )
+    out = capsys.readouterr().out
+    assert "2026-08-17" in out
+    assert "Blue Bottle" in out
+    assert "checking" in out
+    assert "(repeat)" in out
