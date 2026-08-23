@@ -274,9 +274,22 @@ class TransactionRepository:
         The read-first is what turns an ordinary re-import into a useful report
         instead of an exception; the unique constraint remains the final
         concurrency guard.
+
+        Every record must belong to the same account. Deduplication below reads
+        existing fingerprints and external ids scoped to one account_id, so a
+        mixed batch would check records from every account but the first
+        against the wrong account's history and silently miss real duplicates.
         """
         if not records:
             return TransactionImportResult(attempted_count=0, imported_ids=(), already_stored=())
+
+        accounts = {record.account_id for record in records}
+        if len(accounts) > 1:
+            raise ValidationError(
+                f"add_many writes one account at a time; got {len(accounts)}. "
+                f"Deduplication is scoped to a single account, so a mixed batch "
+                f"would silently miss duplicates in all but the first."
+            )
 
         account_id = records[0].account_id
         fingerprints = {self._fingerprint(record) for record in records}
