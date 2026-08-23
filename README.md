@@ -246,6 +246,21 @@ Register the account once:
 uv run python transactions.py accounts add "Chase Checking"
 ```
 
+Enter one by hand, when there is no statement to import:
+
+```bash
+uv run python transactions.py add --account=chase-checking \
+  --date=2026-08-17 --description="Blue Bottle" --amount=-4.50 --yes
+```
+
+A transaction matching one already stored is reported, not written. Add
+`--repeat` to say there really was a second identical charge - that is the one
+thing the tool cannot work out for itself. The same entry is available over
+HTTP as `POST /v1/transactions`, which answers 409 rather than quietly
+succeeding when a match already exists.
+
+Labelling the evaluation dataset has its own tool; see `backend/data/eval/README.md`.
+
 Preview before you write — this never touches the database:
 
 ```bash
