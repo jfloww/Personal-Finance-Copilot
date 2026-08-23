@@ -11,7 +11,10 @@ from offerdelta.application.transactions.import_transactions import (
     import_csv,
 )
 from offerdelta.domain.common.errors import ValidationError
-from offerdelta.infrastructure.postgres.repositories import AccountRepository
+from offerdelta.infrastructure.postgres.repositories import (
+    AccountRepository,
+    TransactionRepository,
+)
 from offerdelta.ingest.commit import ImportMode, ImportWindow
 from offerdelta.ingest.dates import DateOrder
 from offerdelta.ingest.mapping import ColumnMapping
@@ -110,3 +113,45 @@ def test_snapshot_mode_refuses_a_mapped_external_id(session: Session, tmp_path: 
 
     with pytest.raises(ValidationError, match="snapshot mode identifies rows by content"):
         import_csv(session, request)
+
+
+def test_incremental_import_is_refused_after_a_snapshot_import_on_the_same_account(
+    session: Session, tmp_path: Path
+) -> None:
+    """Carry-forward 1: mixing modes on one account silently duplicates a real charge.
+
+    Snapshot rows are stored with external_id = NULL, which makes them
+    invisible to the incremental dedupe check (`existing_external` only
+    collects non-NULL ids); the occurrence offset then steps past those same
+    rows too, so the unique constraint does not catch it either. One real
+    charge, imported once as a snapshot and once incrementally, ends up
+    stored twice with a clean report. Refusing to mix modes on one account is
+    the fix - identity is judged differently in each mode, so switching modes
+    on the same account can duplicate or drop charges either direction.
+    """
+    account = AccountRepository(session).register("Checking")
+    snapshot_path = _file(tmp_path, "2026-08-17,BLUE BOTTLE,-4.50\n")
+    snapshot_outcome = import_csv(session, _request(snapshot_path))
+    assert snapshot_outcome.result.imported_count == 1
+
+    incremental_path = tmp_path / "aug-incremental.csv"
+    incremental_path.write_text(
+        "Date,Description,Amount,Ref\n2026-08-17,BLUE BOTTLE,-4.50,TXN-1\n",
+        encoding="utf-8",
+    )
+    mapping = ColumnMapping(
+        date="Date", description="Description", amount="Amount", external_id="Ref"
+    )
+    incremental_request = ImportRequest(
+        path=incremental_path,
+        account_key="checking",
+        mode=ImportMode.INCREMENTAL,
+        window=AUGUST,
+        mapping=mapping,
+        date_order=DateOrder.ISO,
+    )
+
+    with pytest.raises(ValidationError, match="snapshot"):
+        import_csv(session, incremental_request)
+
+    assert TransactionRepository(session).count(account_id=account.id) == 1

@@ -11,9 +11,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from offerdelta.domain.common.errors import ValidationError
+from offerdelta.infrastructure.postgres.models import ImportBatchRow
 from offerdelta.infrastructure.postgres.repositories import (
     AccountRepository,
     ImportBatchRepository,
@@ -82,6 +84,31 @@ def import_csv(session: Session, request: ImportRequest) -> ImportOutcome:
 
     preview = preview_csv(request.path, mapping=request.mapping, date_order=request.date_order)
     records = plan_records(preview, account_id=account.id, mode=request.mode, window=request.window)
+
+    # A batch's mode is recorded but, until now, never read back. Snapshot
+    # and incremental mode judge row identity by different rules (content
+    # versus the bank's external id), so importing the same account under
+    # both modes is not a stricter or looser re-import - it is a different
+    # identity scheme applied to overlapping rows, which duplicates or drops
+    # charges depending on which mode goes second. Refused before any batch
+    # or transaction row exists, so a refusal here leaves nothing behind.
+    requested_mode = str(request.mode)
+    prior_modes = set(
+        session.scalars(
+            select(ImportBatchRow.mode).where(ImportBatchRow.account_id == account.id)
+        ).all()
+    )
+    other_modes = prior_modes - {requested_mode}
+    if other_modes:
+        previous_mode = sorted(other_modes)[0]
+        raise ValidationError(
+            f"account {request.account_key!r} has prior imports in {previous_mode!r} mode; "
+            f"this import requests {requested_mode!r} mode. Identity is judged differently "
+            "in each mode (snapshot: by content and position; incremental: by the bank's "
+            "external id), so mixing modes on one account can duplicate or drop charges. "
+            f"Keep importing this account in {previous_mode!r} mode, or use a separate "
+            "account for the other mode."
+        )
 
     batch, created = ImportBatchRepository(session).open(
         account.id,
