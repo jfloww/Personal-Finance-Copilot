@@ -10,9 +10,14 @@ unknown arguments by default, and nothing here uses `parse_known_args`.
 
 **Preview never falls through into a write.** The old script rendered ten of
 four hundred rows and then committed in the same non-interactive invocation,
-which made the preview decorative. `commit` is a separate subcommand that
-prints a summary, not a preview, and requires `--yes` or an interactive
-confirmation.
+which made the preview decorative. `commit` is a separate subcommand: it
+always prints a one-line summary of the file, account, mode, and window
+*before* doing anything else -- including on `--yes`, where nobody is there
+to read a prompt but the run should still leave a record of what it did --
+then requires `--yes` or an interactive confirmation to proceed. The summary
+carries no row count: getting one would mean parsing the file a second time,
+and a second read can silently disagree with the first if the file changes
+between them.
 """
 
 from __future__ import annotations
@@ -83,15 +88,14 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _confirm(summary: str) -> bool:
-    """Refuse unless a human actually types yes.
+def _confirm() -> bool:
+    """Ask whether to proceed. The caller has already printed what for.
 
     `isatty()` is not trustworthy everywhere — on some platforms and shells it
     reports a terminal even when stdin is redirected from /dev/null — so EOF is
     treated as a refusal rather than allowed to raise. A write path must fail
     closed when it cannot ask.
     """
-    print(summary)
     if not sys.stdin.isatty():
         print("refusing to write without --yes (stdin is not a terminal)")
         return False
@@ -135,7 +139,8 @@ def main(argv: list[str]) -> int:
         summary = f"{args.file.name} -> account {args.account}, mode {args.mode}" + (
             f", window {args.window_start} to {args.window_end}" if window else ""
         )
-        if not args.yes and not _confirm(summary):
+        print(summary)
+        if not args.yes and not _confirm():
             return 2
 
         with Session(get_engine()) as session:
