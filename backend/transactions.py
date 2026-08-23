@@ -84,11 +84,23 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _confirm(summary: str) -> bool:
+    """Refuse unless a human actually types yes.
+
+    `isatty()` is not trustworthy everywhere — on some platforms and shells it
+    reports a terminal even when stdin is redirected from /dev/null — so EOF is
+    treated as a refusal rather than allowed to raise. A write path must fail
+    closed when it cannot ask.
+    """
     print(summary)
     if not sys.stdin.isatty():
         print("refusing to write without --yes (stdin is not a terminal)")
         return False
-    return input("type 'yes' to write: ").strip().lower() == "yes"
+    try:
+        answer = input("type 'yes' to write: ")
+    except EOFError:
+        print("refusing to write without --yes (no input available)")
+        return False
+    return answer.strip().lower() == "yes"
 
 
 def main(argv: list[str]) -> int:

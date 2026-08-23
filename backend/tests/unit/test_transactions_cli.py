@@ -85,3 +85,29 @@ def test_commit_does_not_render_the_preview_table(
     )
     out = capsys.readouterr().out
     assert "merchant" not in out  # the preview table header
+
+
+def test_commit_refuses_when_stdin_gives_no_input(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """isatty() can wrongly report a terminal; EOF must still refuse, not crash."""
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+
+    def _raise_eof(*_: object) -> str:
+        raise EOFError
+
+    monkeypatch.setattr("builtins.input", _raise_eof)
+
+    code = main(
+        [
+            "commit",
+            str(_file(tmp_path)),
+            "--account=checking",
+            "--mode=snapshot",
+            "--from=2026-08-01",
+            "--to=2026-08-31",
+        ]
+    )
+
+    assert code != 0
+    assert "refusing to write" in capsys.readouterr().out
