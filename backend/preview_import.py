@@ -16,7 +16,6 @@ Exits non-zero when nothing could be parsed.
 from __future__ import annotations
 
 import sys
-import uuid
 from pathlib import Path
 
 from sqlalchemy.exc import SQLAlchemyError
@@ -24,12 +23,11 @@ from sqlalchemy.exc import SQLAlchemyError
 from offerdelta.config import get_settings
 from offerdelta.domain.common.errors import ValidationError
 from offerdelta.infrastructure.postgres.engine import unit_of_work
-from offerdelta.infrastructure.postgres.records import Provenance, TransactionRecord
 from offerdelta.infrastructure.postgres.repositories import (
     AccountRepository,
     TransactionRepository,
 )
-from offerdelta.ingest.commit import ImportPlan, plan_import
+from offerdelta.ingest.commit import ImportMode, ImportWindow, plan_records
 from offerdelta.ingest.dates import DateOrder
 from offerdelta.ingest.mapping import ColumnMapping
 from offerdelta.ingest.preview import ImportPreview, preview_csv
@@ -56,36 +54,28 @@ def _parse_map(spec: str) -> ColumnMapping:
     )
 
 
-def _records(plan: ImportPlan, account_id: uuid.UUID) -> list[TransactionRecord]:
-    return [
-        TransactionRecord(
-            account_id=account_id,
-            posted_on=planned.row.posted_on,
-            description=planned.row.description,
-            normalised_merchant=planned.row.normalised_merchant,
-            amount=planned.row.amount,
-            external_id=None,
-            occurrence=planned.occurrence,
-            provenance=Provenance(
-                source_file=plan.source_file,
-                source_line=planned.row.line,
-                raw_cells=planned.row.raw,
-            ),
-        )
-        for planned in plan.rows
-    ]
+def _implicit_window(preview: ImportPreview) -> ImportWindow | None:
+    """A best-effort snapshot window for this legacy CLI.
+
+    `plan_records` now requires a *declared* window, and this script has no
+    `--from`/`--to` flags to collect one — building that surface is Task 11's
+    job, not a side effect of keeping this script runnable. Spanning exactly
+    the dates present in the file preserves this script's previous behaviour
+    (it never rejected a row for being outside a window) rather than
+    fabricating a safety check that isn't real: it can never reject a row,
+    because the window is drawn from the same rows it would be checked
+    against.
+    """
+    if not preview.rows:
+        return None
+    dates = [row.posted_on for row in preview.rows]
+    return ImportWindow(start=min(dates), end=max(dates))
 
 
 def _commit(preview: ImportPreview, account: str | None) -> int:
     if account is None:
         print("\nnot committed: --commit requires --account=NAME")
         return 2
-
-    try:
-        plan = plan_import(preview, account=account)
-    except ValidationError as error:
-        print(f"\nnot committed: {error}")
-        return 1
 
     if not get_settings().database_available:
         print("\nnot committed: CONNECTION_STRING is not set")
@@ -94,8 +84,13 @@ def _commit(preview: ImportPreview, account: str | None) -> int:
     try:
         with unit_of_work() as session:
             accounts = AccountRepository(session)
-            stored_account = accounts.by_key(plan.account) or accounts.register(plan.account)
-            records = _records(plan, stored_account.id)
+            stored_account = accounts.by_key(account) or accounts.register(account)
+            records = plan_records(
+                preview,
+                account_id=stored_account.id,
+                mode=ImportMode.SNAPSHOT,
+                window=_implicit_window(preview),
+            )
             result = TransactionRepository(session).add_many(records)
     except (RuntimeError, ValidationError) as error:
         print(f"\nnot committed: {error}")

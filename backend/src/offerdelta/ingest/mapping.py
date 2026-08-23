@@ -94,6 +94,10 @@ class ColumnMapping:
     date: str
     description: str
     merchant: str | None = None
+
+    #: The bank's own transaction id, when the export carries one. Its presence
+    #: is what makes an incremental import possible at all.
+    external_id: str | None = None
     amount: str | None = None
     debit: str | None = None
     credit: str | None = None
@@ -123,7 +127,15 @@ class ColumnMapping:
         return not self.amount
 
     def source_columns(self) -> tuple[str, ...]:
-        named = (self.date, self.description, self.merchant, self.amount, self.debit, self.credit)
+        named = (
+            self.date,
+            self.description,
+            self.merchant,
+            self.external_id,
+            self.amount,
+            self.debit,
+            self.credit,
+        )
         return tuple(column for column in named if column)
 
 
