@@ -3,6 +3,21 @@
 The hand-labelled benchmark. `transactions.csv` is the real file;
 `transactions.example.csv` shows the conventions on ten rows.
 
+Label it with the annotator rather than a spreadsheet:
+
+```bash
+uv run python annotate.py statement.csv --annotator=a   # first pass
+uv run python annotate.py --resume --annotator=b        # independent second pass
+uv run python annotate.py --resume --annotator=final    # adjudicate disagreements
+```
+
+It parses the statement with the same importer the real import path uses, so a
+file that annotates cleanly is one that will import cleanly. Labels are chosen
+by two-character code or by unique prefix, a repeated merchant pre-fills its
+previous label for you to accept or override, and the B pass never loads or
+displays anything from the A pass - the independence this dataset depends on is
+the tool's job, not your willpower.
+
 Check it as you go, not at the end:
 
 ```bash
