@@ -121,9 +121,44 @@ class ImportPreview:
             key=lambda item: item[1][0].line,
         )
 
+    def _override_lines(self) -> list[str]:
+        """Name the columns actually in use when they differ from detection.
+
+        `detection` reports what the headers suggested. A caller-supplied
+        mapping overrides it, and a preview that shows only the guess would
+        name one column while the import reads another - in the one place whose
+        whole job is showing what is about to happen.
+        """
+        if self.mapping is None or self.detection.mapping is None:
+            return []
+
+        detected = self.detection.mapping
+        differences = [
+            (field, getattr(detected, field), getattr(self.mapping, field))
+            for field in (
+                "date",
+                "description",
+                "merchant",
+                "external_id",
+                "amount",
+                "debit",
+                "credit",
+            )
+            if getattr(detected, field) != getattr(self.mapping, field)
+        ]
+        if not differences:
+            return []
+
+        lines = ["  supplied mapping overrides detection"]
+        lines.extend(
+            f"    {field:<12} <- {new!r} (detected {old!r})" for field, old, new in differences
+        )
+        return lines
+
     def render(self, limit: int = 10) -> str:
         lines = [f"{self.path}: {self.total_rows} rows", ""]
         lines.append(self.detection.render())
+        lines.extend(self._override_lines())
         lines.append(f"  date order   {self.date_order}")
 
         if self.date_order is DateOrder.AMBIGUOUS and self.mapping is not None:

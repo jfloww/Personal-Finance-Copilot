@@ -186,3 +186,42 @@ def test_line_numbers_survive_skipped_rows(tmp_path: Path) -> None:
     preview = preview_csv(path, date_order=DateOrder.ISO)
 
     assert [row.line for row in preview.rows] == [2, 4]
+
+
+# ------------------------------------------------- the preview names what it uses
+
+
+def test_a_supplied_mapping_is_named_in_the_preview(tmp_path: Path) -> None:
+    """Showing only the detected guess would name one column while reading another."""
+    path = tmp_path / "two-dates.csv"
+    path.write_text(
+        "Transaction Date,Posted Date,Description,Amount\n"
+        "2025-12-31,2026-01-02,BLUE BOTTLE,-4.50\n",
+        encoding="utf-8",
+    )
+    override = ColumnMapping(date="Posted Date", description="Description", amount="Amount")
+    rendered = preview_csv(path, mapping=override, date_order=DateOrder.ISO).render()
+
+    assert "supplied mapping overrides detection" in rendered
+    assert "Posted Date" in rendered
+
+
+def test_no_override_notice_when_the_mapping_matches_detection(tmp_path: Path) -> None:
+    path = _write(tmp_path, "2026-08-17,BLUE BOTTLE,-4.50\n")
+    rendered = preview_csv(path, date_order=DateOrder.ISO).render()
+
+    assert "supplied mapping overrides detection" not in rendered
+
+
+def test_the_override_changes_what_is_parsed(tmp_path: Path) -> None:
+    """The notice must reflect reality, not just print a claim."""
+    path = tmp_path / "two-dates.csv"
+    path.write_text(
+        "Transaction Date,Posted Date,Description,Amount\n"
+        "2025-12-31,2026-01-02,BLUE BOTTLE,-4.50\n",
+        encoding="utf-8",
+    )
+    override = ColumnMapping(date="Posted Date", description="Description", amount="Amount")
+    preview = preview_csv(path, mapping=override, date_order=DateOrder.ISO)
+
+    assert preview.rows[0].posted_on.isoformat() == "2026-01-02"
