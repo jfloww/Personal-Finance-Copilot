@@ -67,7 +67,7 @@ ignore = [
 [tool.ruff.lint.isort]
 # `tests` is our own code, so it sorts with `offerdelta` rather than being
 # mistaken for a third-party package.
-known-first-party = ["offerdelta", "tests"]
+known-first-party = ["offerdelta", "tests", "transactions"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = [
@@ -83,7 +83,7 @@ strict = true
 warn_unreachable = true
 disallow_any_explicit = true
 plugins = ["pydantic.mypy"]
-files = ["src", "tests"]
+files = ["src", "tests", "transactions.py"]
 
 # Pydantic's BaseModel and BaseSettings carry explicit Any in their own
 # signatures, and a wire or environment boundary deals in untyped input by

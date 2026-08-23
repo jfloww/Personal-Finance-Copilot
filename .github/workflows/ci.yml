@@ -43,8 +43,8 @@ jobs:
 
       - name: Format and lint
         run: |
-          uv run ruff format --check src tests
-          uv run ruff check src tests
+          uv run ruff format --check src tests transactions.py
+          uv run ruff check src tests transactions.py
 
       - name: Type check
         run: uv run mypy

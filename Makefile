@@ -6,10 +6,10 @@ install:
 	cd $(BACKEND) && uv sync
 
 fmt:
-	cd $(BACKEND) && uv run ruff format src tests && uv run ruff check --fix src tests
+	cd $(BACKEND) && uv run ruff format src tests transactions.py && uv run ruff check --fix src tests transactions.py
 
 lint:
-	cd $(BACKEND) && uv run ruff format --check src tests && uv run ruff check src tests
+	cd $(BACKEND) && uv run ruff format --check src tests transactions.py && uv run ruff check src tests transactions.py
 
 types:
 	cd $(BACKEND) && uv run mypy
