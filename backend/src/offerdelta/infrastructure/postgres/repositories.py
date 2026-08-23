@@ -290,16 +290,49 @@ class ImportBatchRepository:
         row_count: int,
         now: datetime | None = None,
     ) -> tuple[StoredBatch, bool]:
-        """Return the batch and whether it was newly created."""
-        existing = self._session.scalars(
-            select(ImportBatchRow).where(
-                ImportBatchRow.account_id == account_id,
-                ImportBatchRow.source_sha256 == source_sha256,
-            )
-        ).one_or_none()
+        """Return the batch and whether it was newly created.
+
+        Two callers racing the same `(account_id, source_sha256)` can both
+        pass the SELECT below before either has inserted; `_insert` is what
+        survives that.
+        """
+        existing = self._existing(account_id, source_sha256)
         if existing is not None:
             return _to_stored_batch(existing), False
 
+        return self._insert(
+            account_id,
+            source_file=source_file,
+            source_sha256=source_sha256,
+            mode=mode,
+            window_start=window_start,
+            window_end=window_end,
+            row_count=row_count,
+            now=now,
+        )
+
+    def _insert(
+        self,
+        account_id: uuid.UUID,
+        *,
+        source_file: str,
+        source_sha256: str,
+        mode: str,
+        window_start: date | None,
+        window_end: date | None,
+        row_count: int,
+        now: datetime | None,
+    ) -> tuple[StoredBatch, bool]:
+        """Create the row, or recover if another writer already has.
+
+        Called with no existence check of its own, so this is also the
+        losing side of the race `open()` exists to survive: two callers can
+        both reach here for the same `(account_id, source_sha256)` after each
+        passed its own SELECT, and the unique constraint then lets only one
+        INSERT through. The loser recovers here instead of surfacing the raw
+        `IntegrityError`, so a race still ends in the documented "existing
+        batch, `created=False`" rather than a crash.
+        """
         row = ImportBatchRow(
             id=uuid.uuid4(),
             account_id=account_id,
@@ -311,9 +344,31 @@ class ImportBatchRepository:
             row_count=row_count,
             imported_at=now or datetime.now(UTC),
         )
-        self._session.add(row)
-        self._session.flush()
+        try:
+            # Scoped to a SAVEPOINT so a losing racer only unwinds this
+            # INSERT, not whatever else the caller's session may hold
+            # pending - the caller's unit of work is theirs to roll back,
+            # not this repository's to guess at.
+            with self._session.begin_nested():
+                self._session.add(row)
+                self._session.flush()
+        except IntegrityError:
+            existing = self._existing(account_id, source_sha256)
+            if existing is None:
+                # The constraint fired for a reason other than the race this
+                # handles; the caller's own bug is more useful than a
+                # swallowed exception.
+                raise
+            return _to_stored_batch(existing), False
         return _to_stored_batch(row), True
+
+    def _existing(self, account_id: uuid.UUID, source_sha256: str) -> ImportBatchRow | None:
+        return self._session.scalars(
+            select(ImportBatchRow).where(
+                ImportBatchRow.account_id == account_id,
+                ImportBatchRow.source_sha256 == source_sha256,
+            )
+        ).one_or_none()
 
 
 def _to_stored_batch(row: ImportBatchRow) -> StoredBatch:
