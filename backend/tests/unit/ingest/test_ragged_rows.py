@@ -114,3 +114,75 @@ def test_blank_lines_and_an_embedded_newline_compose_correctly(tmp_path: Path) -
     assert preview.rows[0].line == 3
     # line 5 is blank; the next record starts at line 6
     assert preview.rows[1].line == 6
+
+
+# ------------------------------------------------- rows that are not transactions
+
+
+def test_a_row_empty_in_every_mapped_column_is_not_a_transaction(tmp_path: Path) -> None:
+    """Real exports interleave blank rows among real ones."""
+    path = _write(tmp_path, "2026-08-17,BLUE BOTTLE,-4.50\n,,\n2026-08-18,TRANSIT,-2.75\n")
+    preview = preview_csv(path, date_order=DateOrder.ISO)
+
+    assert len(preview.rows) == 2
+    assert len(preview.errors) == 0
+    assert preview.blank_rows == 1
+
+
+def test_such_rows_are_excluded_from_the_row_count(tmp_path: Path) -> None:
+    """parsed + failed == total_rows must still hold, or the invariant lies."""
+    path = _write(tmp_path, "2026-08-17,BLUE BOTTLE,-4.50\n,,\n,,\n")
+    preview = preview_csv(path, date_order=DateOrder.ISO)
+
+    assert preview.total_rows == 1
+    assert len(preview.rows) + len(preview.errors) == preview.total_rows
+
+
+def test_content_in_an_unmapped_column_does_not_make_it_a_transaction(
+    tmp_path: Path,
+) -> None:
+    """The Chase case: 18 rows carrying a literal "1" in a column nothing reads."""
+    path = tmp_path / "chase.csv"
+    path.write_text(
+        "Date,Description,Amount,Check or Slip #\n2026-08-17,BLUE BOTTLE,-4.50,\n,,,1\n",
+        encoding="utf-8",
+    )
+    preview = preview_csv(path, date_order=DateOrder.ISO)
+
+    assert len(preview.rows) == 1
+    assert len(preview.errors) == 0
+    assert preview.blank_rows == 1
+
+
+def test_a_partially_filled_row_is_still_an_error(tmp_path: Path) -> None:
+    """The safety property: a row with real content must never be skipped."""
+    path = _write(tmp_path, "2026-08-17,BLUE BOTTLE,-4.50\n,BLUE BOTTLE,-9.99\n")
+    preview = preview_csv(path, date_order=DateOrder.ISO)
+
+    assert len(preview.rows) == 1
+    assert len(preview.errors) == 1
+    assert preview.blank_rows == 0
+
+
+def test_an_amount_with_no_date_is_still_an_error(tmp_path: Path) -> None:
+    path = _write(tmp_path, "2026-08-17,BLUE BOTTLE,-4.50\n,,-9.99\n")
+    preview = preview_csv(path, date_order=DateOrder.ISO)
+
+    assert len(preview.errors) == 1
+    assert preview.blank_rows == 0
+
+
+def test_the_count_is_reported_not_hidden(tmp_path: Path) -> None:
+    """Setting rows aside silently is what this importer exists not to do."""
+    path = _write(tmp_path, "2026-08-17,BLUE BOTTLE,-4.50\n,,\n")
+    rendered = preview_csv(path, date_order=DateOrder.ISO).render()
+
+    assert "1 source row(s) held nothing in any mapped column" in rendered
+
+
+def test_line_numbers_survive_skipped_rows(tmp_path: Path) -> None:
+    """A skipped row still consumed a physical line; provenance must not shift."""
+    path = _write(tmp_path, "2026-08-17,A,-1.00\n,,\n2026-08-19,B,-2.00\n")
+    preview = preview_csv(path, date_order=DateOrder.ISO)
+
+    assert [row.line for row in preview.rows] == [2, 4]

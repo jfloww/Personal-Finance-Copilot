@@ -84,6 +84,12 @@ class ImportPreview:
     mapping: ColumnMapping | None
     date_order: DateOrder
     total_rows: int
+
+    #: Source rows that were not transactions at all: every column the mapping
+    #: uses was empty. Counted separately from `total_rows` so the parsed-plus-
+    #: failed invariant still holds, and reported by `render` so setting them
+    #: aside is visible rather than silent.
+    blank_rows: int = 0
     rows: tuple[ParsedRow, ...] = ()
     errors: tuple[RowError, ...] = ()
 
@@ -132,6 +138,11 @@ class ImportPreview:
 
         lines.append("")
         lines.append(f"parsed {len(self.rows)}, failed {len(self.errors)}")
+        if self.blank_rows:
+            lines.append(
+                f"  {self.blank_rows} source row(s) held nothing in any mapped column "
+                f"and were not counted as transactions"
+            )
 
         if self.rows:
             lines.append("")
@@ -245,7 +256,11 @@ def preview_csv(
 
     parsed: list[ParsedRow] = []
     errors: list[RowError] = []
+    blank = 0
     for line, row in numbered:
+        if _is_not_a_transaction(row, resolved):
+            blank += 1
+            continue
         try:
             _reject_ragged(row)
             # `_reject_ragged` raised if `row` held a surplus list or a missing
@@ -260,10 +275,33 @@ def preview_csv(
         detection=detection,
         mapping=resolved,
         date_order=order,
-        total_rows=len(rows),
+        total_rows=len(rows) - blank,
+        blank_rows=blank,
         rows=tuple(parsed),
         errors=tuple(errors),
     )
+
+
+def _is_not_a_transaction(row: dict[str, str | list[str]], mapping: ColumnMapping) -> bool:
+    """True when every column the mapping uses is empty.
+
+    Real exports carry rows that are not transactions: a Chase checking export
+    in this repository's own test data holds 188 rows where all seven fields
+    are empty and 18 more carrying a literal "1" in a column the mapping never
+    reads - 206 of 334, interleaved rather than trailing, so they cannot simply
+    be chopped off the end.
+
+    Refusing the whole file over them is correct but useless, and skipping any
+    row with *a* blank cell would silently drop real transactions. So the test
+    is deliberately narrow: not one mapped column has anything in it, which
+    means there is no transaction here to lose. A row with a date but no
+    amount, or an amount but no date, is still an error and still reported.
+    """
+    for column in mapping.source_columns():
+        value = row.get(column)
+        if isinstance(value, str) and value.strip() and value != _RESTVAL:
+            return False
+    return True
 
 
 def _sample_value(value: str | list[str] | None) -> str:
