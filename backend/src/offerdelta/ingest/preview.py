@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import csv
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from pathlib import Path
 from typing import Final, cast
@@ -34,7 +34,12 @@ from offerdelta.domain.common.errors import ValidationError
 from offerdelta.domain.common.money import Money
 from offerdelta.domain.transactions.parsing import normalise_description, parse_amount
 from offerdelta.ingest.dates import DateOrder, detect_date_order, parse_date
-from offerdelta.ingest.mapping import ColumnMapping, MappingDetection, detect_mapping
+from offerdelta.ingest.mapping import (
+    AmountSign,
+    ColumnMapping,
+    MappingDetection,
+    detect_mapping,
+)
 
 #: How many values per column to sample when detecting the mapping and the date
 #: order. Enough to find a decisive day-above-twelve without reading a whole
@@ -121,6 +126,34 @@ class ImportPreview:
             key=lambda item: item[1][0].line,
         )
 
+    def _sign_warning(self) -> list[str]:
+        """Say so when a signed column looks like it runs the other way.
+
+        Most rows on a card or current account are money leaving it. A signed
+        file that is mostly positive under the default convention is therefore
+        suspicious - American Express writes charges positive, and read at face
+        value every charge becomes income and every payment becomes spending.
+
+        This is a warning and not a refusal because a month of mostly refunds,
+        or a savings account taking deposits, is a real thing. The numbers
+        cannot settle it; only the person who downloaded the file can.
+        """
+        if self.mapping is None or not self.mapping.amount or not self.rows:
+            return []
+        if self.mapping.amount_sign is not AmountSign.OUTFLOW_NEGATIVE:
+            return []
+
+        positive = sum(1 for row in self.rows if row.amount.amount > 0)
+        if positive * 2 <= len(self.rows):
+            return []
+
+        return [
+            f"  {positive} of {len(self.rows)} rows are positive, i.e. read as money IN.",
+            "  If this is an American Express export, charges are written positive and "
+            "this is backwards:",
+            "  re-run with --sign=outflow-positive. Every total depends on getting this right.",
+        ]
+
     def _override_lines(self) -> list[str]:
         """Name the columns actually in use when they differ from detection.
 
@@ -173,6 +206,7 @@ class ImportPreview:
 
         lines.append("")
         lines.append(f"parsed {len(self.rows)}, failed {len(self.errors)}")
+        lines.extend(self._sign_warning())
         if self.blank_rows:
             lines.append(
                 f"  {self.blank_rows} source row(s) held nothing in any mapped column "
@@ -219,6 +253,7 @@ def preview_csv(
     *,
     mapping: ColumnMapping | None = None,
     date_order: DateOrder | None = None,
+    amount_sign: AmountSign | None = None,
 ) -> ImportPreview:
     """Parse a file and report what an import would produce.
 
@@ -270,6 +305,12 @@ def preview_csv(
 
     detection = detect_mapping(list(headers), sample)
     resolved = mapping or detection.mapping
+    if resolved is not None and amount_sign is not None:
+        # Detection reads headers, which say nothing about which way the signs
+        # run. Applying the convention here means a file whose columns detect
+        # correctly - as Amex does - needs only the sign stated, not a full
+        # hand-written mapping.
+        resolved = replace(resolved, amount_sign=amount_sign)
 
     if resolved is None:
         return ImportPreview(
@@ -427,12 +468,15 @@ def _to_row(row: dict[str, str], line: int, mapping: ColumnMapping, order: DateO
 def _amount(row: dict[str, str], mapping: ColumnMapping) -> Money:
     """Normalise either shape to one signed amount.
 
-    A signed `amount` column is taken as-is. Split `debit`/`credit` columns hold
-    magnitudes, so the debit is negated — the convention everywhere else in this
-    codebase is that money out is negative.
+    A signed `amount` column is read under the declared convention. Split
+    `debit`/`credit` columns hold magnitudes, so the debit is negated — the
+    convention everywhere else in this codebase is that money out is negative.
     """
     if mapping.amount:
-        return parse_amount((row.get(mapping.amount) or "").strip())
+        signed = parse_amount((row.get(mapping.amount) or "").strip())
+        if mapping.amount_sign is AmountSign.OUTFLOW_POSITIVE:
+            return -signed
+        return signed
 
     debit_text = (row.get(mapping.debit) or "").strip() if mapping.debit else ""
     credit_text = (row.get(mapping.credit) or "").strip() if mapping.credit else ""

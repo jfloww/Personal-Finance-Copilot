@@ -6,7 +6,9 @@ from pathlib import Path
 import pytest
 
 from offerdelta.config import get_settings
+from offerdelta.domain.common.errors import ValidationError
 from offerdelta.infrastructure.postgres import engine as pg_engine
+from offerdelta.ingest.mapping import AmountSign
 from transactions import build_parser, main
 
 HEADER = "Date,Description,Amount\n"
@@ -276,3 +278,82 @@ def test_add_prints_the_summary_before_asking(
     assert "Blue Bottle" in out
     assert "checking" in out
     assert "(repeat)" in out
+
+
+# ---------------------------------------------------------------- --sign wiring
+
+
+def test_commit_passes_the_sign_convention_through(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A flag that parses but never reaches the request is worse than no flag.
+
+    This exact wiring was missed once: --sign worked on preview, was accepted
+    by commit, and was silently dropped before the import - so 245 Amex rows
+    imported with every charge recorded as income.
+    """
+    captured: dict[str, object] = {}
+
+    def _fake_import_csv(_session: object, request: object) -> object:
+        captured["sign"] = request.amount_sign  # type: ignore[attr-defined]
+        raise ValidationError("stop here; the request is what we are testing")
+
+    monkeypatch.setattr("transactions.import_csv", _fake_import_csv)
+    monkeypatch.setattr("transactions.get_engine", lambda: None)
+    monkeypatch.setattr("transactions.Session", lambda _engine: _NullSession())
+
+    main(
+        [
+            "commit",
+            str(_file(tmp_path)),
+            "--account=checking",
+            "--mode=snapshot",
+            "--from=2026-08-01",
+            "--to=2026-08-31",
+            "--sign=outflow-positive",
+            "--yes",
+        ]
+    )
+
+    assert captured["sign"] is AmountSign.OUTFLOW_POSITIVE
+
+
+def test_commit_defaults_to_no_sign_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: dict[str, object] = {}
+
+    def _fake_import_csv(_session: object, request: object) -> object:
+        captured["sign"] = request.amount_sign  # type: ignore[attr-defined]
+        raise ValidationError("stop here")
+
+    monkeypatch.setattr("transactions.import_csv", _fake_import_csv)
+    monkeypatch.setattr("transactions.get_engine", lambda: None)
+    monkeypatch.setattr("transactions.Session", lambda _engine: _NullSession())
+
+    main(
+        [
+            "commit",
+            str(_file(tmp_path)),
+            "--account=checking",
+            "--mode=snapshot",
+            "--from=2026-08-01",
+            "--to=2026-08-31",
+            "--yes",
+        ]
+    )
+
+    assert captured["sign"] is None
+
+
+class _NullSession:
+    """Enough Session for the CLI's `with` block; the import is faked out."""
+
+    def __enter__(self) -> _NullSession:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        return None
+
+    def commit(self) -> None:
+        return None

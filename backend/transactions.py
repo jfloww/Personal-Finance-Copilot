@@ -27,6 +27,7 @@ import sys
 from collections.abc import Callable
 from datetime import date
 from pathlib import Path
+from typing import Final
 
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -40,8 +41,14 @@ from offerdelta.infrastructure.postgres.engine import get_engine
 from offerdelta.infrastructure.postgres.repositories import AccountRepository
 from offerdelta.ingest.commit import ImportMode, ImportWindow
 from offerdelta.ingest.dates import DateOrder
-from offerdelta.ingest.mapping import ColumnMapping
+from offerdelta.ingest.mapping import AmountSign, ColumnMapping
 from offerdelta.ingest.preview import preview_csv
+
+#: The `--map` flag names source columns only. `amount_sign` is a convention,
+#: not a column, so it gets its own flag rather than hiding inside this one.
+_MAPPABLE: Final = frozenset(
+    {"date", "description", "merchant", "external_id", "amount", "debit", "credit"}
+)
 
 
 def _mapping(raw: str) -> ColumnMapping:
@@ -56,9 +63,15 @@ def _mapping(raw: str) -> ColumnMapping:
         name, _, column = pair.partition(":")
         if not name or not column:
             raise argparse.ArgumentTypeError(f"--map entries look like field:Column, got {pair!r}")
-        fields[name.strip()] = column.strip()
+        key = name.strip()
+        if key not in _MAPPABLE:
+            raise argparse.ArgumentTypeError(
+                f"--map takes column names for {', '.join(sorted(_MAPPABLE))}; "
+                f"got {key!r}. The sign convention has its own flag, --sign."
+            )
+        fields[key] = column.strip()
     try:
-        return ColumnMapping(**fields)
+        return ColumnMapping(**fields)  # type: ignore[arg-type]
     except (ValidationError, TypeError) as error:
         raise argparse.ArgumentTypeError(str(error)) from error
 
@@ -73,6 +86,7 @@ def build_parser() -> argparse.ArgumentParser:
     preview.add_argument(
         "--dates", dest="dates", choices=[o.value for o in DateOrder], default=None
     )
+    preview.add_argument("--sign", choices=[s.value for s in AmountSign], default=None)
 
     commit = sub.add_parser("commit", help="write an import; requires --yes")
     commit.add_argument("file", type=Path)
@@ -82,6 +96,12 @@ def build_parser() -> argparse.ArgumentParser:
     commit.add_argument("--to", dest="window_end", type=date.fromisoformat, default=None)
     commit.add_argument("--map", dest="mapping", type=_mapping, default=None)
     commit.add_argument("--dates", dest="dates", choices=[o.value for o in DateOrder], default=None)
+    commit.add_argument(
+        "--sign",
+        choices=[s.value for s in AmountSign],
+        default=None,
+        help="which sign an outflow carries; Amex exports need outflow-positive",
+    )
     commit.add_argument("--yes", action="store_true", help="confirm the write")
 
     add = sub.add_parser("add", help="enter one transaction by hand; requires --yes")
@@ -205,6 +225,7 @@ def _preview(args: argparse.Namespace) -> int:
         args.file,
         mapping=args.mapping,
         date_order=DateOrder(args.dates) if args.dates else None,
+        amount_sign=AmountSign(args.sign) if args.sign else None,
     )
     print(preview.render())
     return 0 if preview.importable else 1
@@ -233,6 +254,7 @@ def _commit(args: argparse.Namespace) -> int:
                 window=window,
                 mapping=args.mapping,
                 date_order=DateOrder(args.dates) if args.dates else None,
+                amount_sign=AmountSign(args.sign) if args.sign else None,
             ),
         )
         session.commit()

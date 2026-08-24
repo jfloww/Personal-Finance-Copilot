@@ -50,7 +50,7 @@ from offerdelta.domain.costs.categories import CostCategory
 from offerdelta.domain.transactions.parsing import normalise_description
 from offerdelta.evaluation.labels import ABSTAIN, LABEL_SPACE, NON_SPENDING_LABELS
 from offerdelta.ingest.dates import DateOrder
-from offerdelta.ingest.mapping import ColumnMapping
+from offerdelta.ingest.mapping import AmountSign, ColumnMapping
 from offerdelta.ingest.preview import preview_csv
 
 DEFAULT_DATASET: Final = Path("data/eval/transactions.csv")
@@ -213,7 +213,11 @@ def render_menu() -> str:
 
 
 def load_bank_csv(
-    path: Path, *, mapping: ColumnMapping | None, date_order: DateOrder | None
+    path: Path,
+    *,
+    mapping: ColumnMapping | None,
+    date_order: DateOrder | None,
+    amount_sign: AmountSign | None = None,
 ) -> list[Row]:
     """Parse a statement with the importer, so there is only one CSV reader.
 
@@ -221,7 +225,7 @@ def load_bank_csv(
     detection behave exactly as they do on the import path - and a statement
     that annotates cleanly is one that will import cleanly.
     """
-    preview = preview_csv(path, mapping=mapping, date_order=date_order)
+    preview = preview_csv(path, mapping=mapping, date_order=date_order, amount_sign=amount_sign)
     if preview.mapping is None:
         raise ValidationError(
             f"could not work out which columns {path.name} uses; pass --map explicitly"
@@ -411,9 +415,22 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--map", dest="mapping", default=None)
     parser.add_argument("--dates", dest="dates", choices=[o.value for o in DateOrder], default=None)
     parser.add_argument(
+        "--sign",
+        choices=[s.value for s in AmountSign],
+        default=None,
+        help="which sign an outflow carries; Amex exports need outflow-positive",
+    )
+    parser.add_argument(
         "--resume", action="store_true", help="continue the dataset without adding a file"
     )
     return parser
+
+
+#: `--map` names source columns only. The sign convention is not a column, so
+#: it has its own flag rather than hiding inside this one.
+_MAPPABLE: Final = frozenset(
+    {"date", "description", "merchant", "external_id", "amount", "debit", "credit"}
+)
 
 
 def _mapping(raw: str | None) -> ColumnMapping | None:
@@ -424,8 +441,14 @@ def _mapping(raw: str | None) -> ColumnMapping | None:
         name, _, column = pair.partition(":")
         if not name or not column:
             raise ValidationError(f"--map entries look like field:Column, got {pair!r}")
-        fields[name.strip()] = column.strip()
-    return ColumnMapping(**fields)
+        key = name.strip()
+        if key not in _MAPPABLE:
+            raise ValidationError(
+                f"--map takes column names for {', '.join(sorted(_MAPPABLE))}; got {key!r}. "
+                f"The sign convention has its own flag, --sign."
+            )
+        fields[key] = column.strip()
+    return ColumnMapping(**fields)  # type: ignore[arg-type]
 
 
 def main(argv: list[str]) -> int:
@@ -442,6 +465,7 @@ def main(argv: list[str]) -> int:
                 args.file,
                 mapping=_mapping(args.mapping),
                 date_order=DateOrder(args.dates) if args.dates else None,
+                amount_sign=AmountSign(args.sign) if args.sign else None,
             )
             before = len(rows)
             rows = merge(rows, incoming)

@@ -18,6 +18,7 @@ figure downstream in a way no later check can catch.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Final
 
 from offerdelta.domain.common.errors import ValidationError
@@ -82,6 +83,27 @@ def _canonical(header: str) -> str:
     return " ".join(cleaned.split())
 
 
+class AmountSign(StrEnum):
+    """Which sign an outflow carries in a signed amount column.
+
+    Most banks write money leaving the account as negative. American Express
+    does the opposite: a charge is positive and a payment or credit is
+    negative. Taking a signed column at face value therefore reads every Amex
+    charge as income and every payment as spending - both totals wrong, in
+    opposite directions, and both entirely plausible-looking.
+
+    There is no reliable way to detect this from the numbers alone, because a
+    month of mostly-refunds is a real thing. So the convention is declared per
+    import rather than guessed.
+    """
+
+    #: Money out is negative. Chase, Capital One, and most banks.
+    OUTFLOW_NEGATIVE = "outflow-negative"
+
+    #: Money out is positive. American Express.
+    OUTFLOW_POSITIVE = "outflow-positive"
+
+
 @dataclass(frozen=True)
 class ColumnMapping:
     """Which source column supplies each canonical field.
@@ -101,6 +123,10 @@ class ColumnMapping:
     amount: str | None = None
     debit: str | None = None
     credit: str | None = None
+
+    #: Only meaningful with a signed `amount` column: split debit/credit
+    #: columns carry magnitudes, so their direction is structural.
+    amount_sign: AmountSign = AmountSign.OUTFLOW_NEGATIVE
 
     def __post_init__(self) -> None:
         if not self.date:

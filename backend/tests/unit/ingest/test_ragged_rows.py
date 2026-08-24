@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from offerdelta.ingest.dates import DateOrder
-from offerdelta.ingest.mapping import ColumnMapping
+from offerdelta.ingest.mapping import AmountSign, ColumnMapping
 from offerdelta.ingest.preview import preview_csv
 
 HEADER = "Date,Description,Amount\n"
@@ -225,3 +225,70 @@ def test_the_override_changes_what_is_parsed(tmp_path: Path) -> None:
     preview = preview_csv(path, mapping=override, date_order=DateOrder.ISO)
 
     assert preview.rows[0].posted_on.isoformat() == "2026-01-02"
+
+
+# ------------------------------------------------- sign convention
+
+
+def test_a_signed_column_is_read_money_out_negative_by_default(tmp_path: Path) -> None:
+    path = _write(tmp_path, "2026-08-17,BLUE BOTTLE,-4.50\n")
+    preview = preview_csv(path, date_order=DateOrder.ISO)
+
+    assert preview.rows[0].amount.amount < 0
+
+
+def test_outflow_positive_inverts_the_column(tmp_path: Path) -> None:
+    """Amex writes a charge positive; read at face value it becomes income."""
+    path = _write(tmp_path, "2026-08-17,BLUE BOTTLE,4.50\n2026-08-18,PAYMENT,-100.00\n")
+    preview = preview_csv(path, date_order=DateOrder.ISO, amount_sign=AmountSign.OUTFLOW_POSITIVE)
+
+    assert preview.rows[0].amount.amount < 0  # the charge is money out
+    assert preview.rows[1].amount.amount > 0  # the payment is money in
+
+
+def test_the_sign_applies_to_a_detected_mapping(tmp_path: Path) -> None:
+    """Headers detect fine for Amex; only the convention needs stating."""
+    path = _write(tmp_path, "2026-08-17,BLUE BOTTLE,4.50\n")
+    preview = preview_csv(path, date_order=DateOrder.ISO, amount_sign=AmountSign.OUTFLOW_POSITIVE)
+
+    assert preview.mapping is not None
+    assert preview.mapping.amount_sign is AmountSign.OUTFLOW_POSITIVE
+    assert preview.rows[0].amount.amount < 0
+
+
+def test_a_mostly_positive_signed_file_is_flagged(tmp_path: Path) -> None:
+    """The check that would have caught 245 inverted Amex rows."""
+    body = "".join(f"2026-08-{d:02d},MERCHANT {d},{d}.00\n" for d in range(1, 11))
+    path = _write(tmp_path, body)
+    rendered = preview_csv(path, date_order=DateOrder.ISO).render()
+
+    assert "read as money IN" in rendered
+    assert "outflow-positive" in rendered
+
+
+def test_a_mostly_negative_file_is_not_flagged(tmp_path: Path) -> None:
+    body = "".join(f"2026-08-{d:02d},MERCHANT {d},-{d}.00\n" for d in range(1, 11))
+    path = _write(tmp_path, body)
+
+    assert "read as money IN" not in preview_csv(path, date_order=DateOrder.ISO).render()
+
+
+def test_no_warning_once_the_convention_is_declared(tmp_path: Path) -> None:
+    body = "".join(f"2026-08-{d:02d},MERCHANT {d},{d}.00\n" for d in range(1, 11))
+    path = _write(tmp_path, body)
+    rendered = preview_csv(
+        path, date_order=DateOrder.ISO, amount_sign=AmountSign.OUTFLOW_POSITIVE
+    ).render()
+
+    assert "read as money IN" not in rendered
+
+
+def test_split_debit_credit_ignores_the_sign_flag(tmp_path: Path) -> None:
+    """Split columns carry magnitudes; their direction is structural."""
+    path = tmp_path / "split.csv"
+    path.write_text(
+        "Date,Description,Debit,Credit\n2026-08-17,BLUE BOTTLE,4.50,\n", encoding="utf-8"
+    )
+    preview = preview_csv(path, date_order=DateOrder.ISO, amount_sign=AmountSign.OUTFLOW_POSITIVE)
+
+    assert preview.rows[0].amount.amount < 0

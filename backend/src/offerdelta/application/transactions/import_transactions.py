@@ -26,7 +26,7 @@ from offerdelta.infrastructure.postgres.repositories import (
 from offerdelta.ingest.checksum import file_sha256
 from offerdelta.ingest.commit import ImportMode, ImportWindow, plan_records
 from offerdelta.ingest.dates import DateOrder
-from offerdelta.ingest.mapping import ColumnMapping
+from offerdelta.ingest.mapping import AmountSign, ColumnMapping
 from offerdelta.ingest.preview import preview_csv
 
 
@@ -40,6 +40,10 @@ class ImportRequest:
     window: ImportWindow | None
     mapping: ColumnMapping | None = None
     date_order: DateOrder | None = None
+
+    #: Which sign an outflow carries in a signed amount column. Amex writes
+    #: charges positive; read at face value every charge becomes income.
+    amount_sign: AmountSign | None = None
 
 
 @dataclass(frozen=True)
@@ -92,7 +96,12 @@ def import_csv(session: Session, request: ImportRequest) -> ImportOutcome:
     # and `backend/transactions.py`'s, on why a second independent read
     # cannot be trusted to agree with the first.
     digest_before = file_sha256(request.path)
-    preview = preview_csv(request.path, mapping=request.mapping, date_order=request.date_order)
+    preview = preview_csv(
+        request.path,
+        mapping=request.mapping,
+        date_order=request.date_order,
+        amount_sign=request.amount_sign,
+    )
     digest_after = file_sha256(request.path)
     if digest_after != digest_before:
         raise ValidationError(
