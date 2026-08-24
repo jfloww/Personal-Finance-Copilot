@@ -79,6 +79,11 @@ class CostCategory(StrEnum):
     LIVING_TRAVEL = "LIVING_TRAVEL"
     LIVING_OTHER = "LIVING_OTHER"
 
+    #: Appended rather than slotted in beside the other LIVING members:
+    #: annotator codes are derived from declaration order, so inserting
+    #: earlier would silently redefine a code someone is already using.
+    LIVING_CLOTHING = "LIVING_CLOTHING"
+
     RELOCATION_MOVE = "RELOCATION_MOVE"
     RELOCATION_DEPOSIT = "RELOCATION_DEPOSIT"
     RELOCATION_BROKER_FEE = "RELOCATION_BROKER_FEE"
@@ -108,6 +113,7 @@ CATEGORY_OWNER: Mapping[CostCategory, CalculatorName] = {
     CostCategory.LIVING_ENTERTAINMENT: CalculatorName.LIVING,
     CostCategory.LIVING_TRAVEL: CalculatorName.LIVING,
     CostCategory.LIVING_OTHER: CalculatorName.LIVING,
+    CostCategory.LIVING_CLOTHING: CalculatorName.LIVING,
     CostCategory.RELOCATION_MOVE: CalculatorName.RELOCATION,
     CostCategory.RELOCATION_DEPOSIT: CalculatorName.RELOCATION,
     CostCategory.RELOCATION_BROKER_FEE: CalculatorName.RELOCATION,

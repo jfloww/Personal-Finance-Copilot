@@ -119,3 +119,18 @@ def test_relocation_costs_are_one_time() -> None:
     # A security deposit is an event, not a rate; annualising it would be the
     # error explicit periods and cash-flow types exist to prevent.
     assert owner_of(CostCategory.RELOCATION_DEPOSIT) is CalculatorName.RELOCATION
+
+
+def test_every_category_has_an_owning_calculator() -> None:
+    """A category with no owner raises only when something tries to use it.
+
+    That is late: the taxonomy is a closed set, so an unmapped member is a
+    mistake at the moment it is declared, not at the moment a calculator
+    happens to meet it. Adding LIVING_CLOTHING is what made the gap visible.
+    """
+    unmapped = [category for category in CostCategory if category not in CATEGORY_OWNER]
+    assert unmapped == [], f"no owning calculator for: {[c.value for c in unmapped]}"
+
+
+def test_the_owner_map_names_no_category_that_does_not_exist() -> None:
+    assert set(CATEGORY_OWNER) <= set(CostCategory)
