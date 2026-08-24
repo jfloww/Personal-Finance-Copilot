@@ -47,17 +47,26 @@ class CashFlowType(StrEnum):
 
 
 class CostCategory(StrEnum):
-    """A closed set. There is deliberately no generic bucket.
+    """A closed set, with one deliberate generic bucket.
 
-    No `INSURANCE` and no `MEDICAL`: a generic category is precisely what lets
-    the same dollar be claimed by two calculators. Insurance routes to housing,
-    health, or vehicle depending on what it insures; medical routes to health.
+    `MEDICAL` is still absent: a generic medical category would let the same
+    dollar be claimed by two calculators, and medical routes to health cleanly.
+
+    `LIVING_INSURANCE` is the exception, added knowingly. The original design
+    split insurance by what it insured - renters to housing, auto to vehicle -
+    which is the more precise answer and the one a relocation comparison wants,
+    because renters insurance changes when you move and auto insurance largely
+    does not. It was merged anyway because in practice one insurer bills both
+    under one indistinguishable merchant string, and a distinction nobody can
+    make from the data is a distinction that gets made wrongly.
+
+    The cost is real and worth stating: housing totals no longer include
+    renters insurance, and a relocation comparison is that much less exact.
     """
 
     HOUSING_RENT_OR_MORTGAGE = "HOUSING_RENT_OR_MORTGAGE"
     HOUSING_UTILITIES = "HOUSING_UTILITIES"
     HOUSING_INTERNET = "HOUSING_INTERNET"
-    HOUSING_RENTERS_INSURANCE = "HOUSING_RENTERS_INSURANCE"
     HOUSING_PARKING_RESIDENTIAL = "HOUSING_PARKING_RESIDENTIAL"
 
     HEALTH_PREMIUM = "HEALTH_PREMIUM"
@@ -84,6 +93,7 @@ class CostCategory(StrEnum):
     #: earlier would silently redefine a code someone is already using.
     LIVING_CLOTHING = "LIVING_CLOTHING"
     LIVING_EDUCATION = "LIVING_EDUCATION"
+    LIVING_INSURANCE = "LIVING_INSURANCE"
 
     RELOCATION_MOVE = "RELOCATION_MOVE"
     RELOCATION_DEPOSIT = "RELOCATION_DEPOSIT"
@@ -96,7 +106,6 @@ CATEGORY_OWNER: Mapping[CostCategory, CalculatorName] = {
     CostCategory.HOUSING_RENT_OR_MORTGAGE: CalculatorName.HOUSING,
     CostCategory.HOUSING_UTILITIES: CalculatorName.HOUSING,
     CostCategory.HOUSING_INTERNET: CalculatorName.HOUSING,
-    CostCategory.HOUSING_RENTERS_INSURANCE: CalculatorName.HOUSING,
     CostCategory.HOUSING_PARKING_RESIDENTIAL: CalculatorName.HOUSING,
     CostCategory.HEALTH_PREMIUM: CalculatorName.HEALTH,
     CostCategory.HEALTH_OUT_OF_POCKET: CalculatorName.HEALTH,
@@ -116,6 +125,7 @@ CATEGORY_OWNER: Mapping[CostCategory, CalculatorName] = {
     CostCategory.LIVING_OTHER: CalculatorName.LIVING,
     CostCategory.LIVING_CLOTHING: CalculatorName.LIVING,
     CostCategory.LIVING_EDUCATION: CalculatorName.LIVING,
+    CostCategory.LIVING_INSURANCE: CalculatorName.LIVING,
     CostCategory.RELOCATION_MOVE: CalculatorName.RELOCATION,
     CostCategory.RELOCATION_DEPOSIT: CalculatorName.RELOCATION,
     CostCategory.RELOCATION_BROKER_FEE: CalculatorName.RELOCATION,

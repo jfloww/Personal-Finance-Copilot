@@ -58,7 +58,7 @@
           "period": "MONTHLY"
         },
         "cash_flow_type": "RECURRING_CASH",
-        "category": "HOUSING_RENTERS_INSURANCE",
+        "category": "LIVING_INSURANCE",
         "effective_date": "2026-07-01",
         "ends_before": null,
         "evidence": "ASSUMED",

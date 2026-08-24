@@ -73,7 +73,7 @@ def test_auto_insurance_is_a_living_cost_not_a_housing_or_health_one() -> None:
 
 
 def test_renters_insurance_is_a_housing_cost() -> None:
-    assert owner_of(CostCategory.HOUSING_RENTERS_INSURANCE) is CalculatorName.HOUSING
+    assert owner_of(CostCategory.LIVING_INSURANCE) is CalculatorName.LIVING
 
 
 def test_health_premiums_and_out_of_pocket_both_belong_to_health() -> None:
