@@ -43,10 +43,30 @@ from offerdelta.infrastructure.llm.factory import build_provider
 DEFAULT_PATH = Path("data/eval/transactions.csv")
 HOLDOUT_FRACTION = 0.3
 
-#: Published per-million token prices. Change these to match the model actually
-#: used; leaving them None reports tokens without pretending to a cost.
-INPUT_PRICE = Decimal(3)
-OUTPUT_PRICE = Decimal(15)
+#: Published per-million token prices, per model. Keyed by the exact model id
+#: the provider reports, so a report can never price one model at another's
+#: rate - the previous single pair of constants silently did, and a cheaper
+#: model would have been reported costing three times what it did.
+#:
+#: A model absent from this table is reported as "not priced" rather than
+#: guessed. A wrong cost is worse than no cost: it reads as measured.
+PRICES: dict[str, tuple[Decimal, Decimal]] = {
+    "claude-haiku-4-5": (Decimal(1), Decimal(5)),
+    "claude-sonnet-5": (Decimal(3), Decimal(15)),
+    "claude-opus-5": (Decimal(5), Decimal(25)),
+}
+
+#: Used only for the pre-run estimate, which must not depend on the model
+#: resolving successfully. The most expensive supported model, so the estimate
+#: over-states rather than under-states.
+_ESTIMATE_PRICES = max(PRICES.values(), key=lambda pair: pair[1])
+
+
+def prices_for(model: str) -> tuple[Decimal | None, Decimal | None]:
+    """Published rates for a model, or (None, None) if we do not know them."""
+    found = PRICES.get(model)
+    return found if found is not None else (None, None)
+
 
 #: Rough per-transaction token cost, for the estimate shown before a live run.
 #: Derived from the offline smoke output: the prompt and schema dominate, and
@@ -79,8 +99,9 @@ def _estimate_cost(rows: int) -> Decimal:
     below this. Over-estimating is the right direction for a number whose job is
     to let someone say no.
     """
-    input_cost = Decimal(rows * ESTIMATED_INPUT_TOKENS) / Decimal(1_000_000) * INPUT_PRICE
-    output_cost = Decimal(rows * ESTIMATED_OUTPUT_TOKENS) / Decimal(1_000_000) * OUTPUT_PRICE
+    input_price, output_price = _ESTIMATE_PRICES
+    input_cost = Decimal(rows * ESTIMATED_INPUT_TOKENS) / Decimal(1_000_000) * input_price
+    output_cost = Decimal(rows * ESTIMATED_OUTPUT_TOKENS) / Decimal(1_000_000) * output_price
     # Twice: the LLM system and the hybrid are scored separately, and each makes
     # its own calls.
     return (input_cost + output_cost) * 2
@@ -118,7 +139,7 @@ def _holdout_for_run(holdout: LabelledDataset, limit: int | None) -> LabelledDat
     )
 
 
-def main(argv: list[str] | None = None) -> int:
+def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Score rules, LLM, and hybrid on one holdout.")
     parser.add_argument("path", nargs="?", type=Path, default=DEFAULT_PATH)
     parser.add_argument(
@@ -138,6 +159,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="skip the cost confirmation prompt on a live run",
     )
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = _build_parser()
     args = parser.parse_args(argv)
 
     path: Path = args.path
@@ -190,11 +216,21 @@ def main(argv: list[str] | None = None) -> int:
     llm = LLMCategoriser(provider)
     hybrid = HybridCategoriser(fit_rules(split.development), LLMCategoriser(provider))
 
+    # Priced at the rate for the model that actually ran, not a constant:
+    # the report has to be able to say what this run cost, not what some other
+    # model would have cost.
+    input_price, output_price = prices_for(provider.model)
+    if input_price is None:
+        print(
+            f"note: no published prices recorded for {provider.model!r}; "
+            f"tokens will be reported without a cost"
+        )
+
     result = evaluate(
         holdout,
         [rules, llm, hybrid],
-        input_price_per_million=INPUT_PRICE,
-        output_price_per_million=OUTPUT_PRICE,
+        input_price_per_million=input_price,
+        output_price_per_million=output_price,
     )
     print(result.render())
 

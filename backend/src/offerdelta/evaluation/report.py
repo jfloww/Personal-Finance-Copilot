@@ -106,9 +106,15 @@ class SystemResult:
                 else f"{cost / Decimal(self.overall.total):.6f}"
             )
             lines.append(
-                f"  cost: {usage.calls} calls, {usage.total_tokens} tokens, "
-                f"total {priced}, per row {per_row}"
+                f"  tokens: {usage.input_tokens} in, {usage.output_tokens} out, "
+                f"{usage.total_tokens} total over {usage.calls} calls"
             )
+            rates = (
+                "unpriced"
+                if input_price is None or output_price is None
+                else f"at {input_price}/{output_price} per Mtok"
+            )
+            lines.append(f"  cost: total {priced}, per row {per_row} ({rates})")
             lines.append(f"  latency: p50 {usage.p50_latency_ms}ms  p95 {usage.p95_latency_ms}ms")
             if usage.failures or usage.rejected_outputs:
                 lines.append(
