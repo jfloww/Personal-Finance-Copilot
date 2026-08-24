@@ -95,6 +95,12 @@ class CostCategory(StrEnum):
     LIVING_EDUCATION = "LIVING_EDUCATION"
     LIVING_INSURANCE = "LIVING_INSURANCE"
 
+    #: What a card costs to hold, as distinct from what was bought with it:
+    #: annual and membership fees. Interest and bank charges are not this
+    #: category - they scale with balance and behaviour rather than being a
+    #: fixed cost of holding the card, and would flatter a fee if merged.
+    LIVING_CARD_FEE = "LIVING_CARD_FEE"
+
     RELOCATION_MOVE = "RELOCATION_MOVE"
     RELOCATION_DEPOSIT = "RELOCATION_DEPOSIT"
     RELOCATION_BROKER_FEE = "RELOCATION_BROKER_FEE"
@@ -126,6 +132,7 @@ CATEGORY_OWNER: Mapping[CostCategory, CalculatorName] = {
     CostCategory.LIVING_CLOTHING: CalculatorName.LIVING,
     CostCategory.LIVING_EDUCATION: CalculatorName.LIVING,
     CostCategory.LIVING_INSURANCE: CalculatorName.LIVING,
+    CostCategory.LIVING_CARD_FEE: CalculatorName.LIVING,
     CostCategory.RELOCATION_MOVE: CalculatorName.RELOCATION,
     CostCategory.RELOCATION_DEPOSIT: CalculatorName.RELOCATION,
     CostCategory.RELOCATION_BROKER_FEE: CalculatorName.RELOCATION,
