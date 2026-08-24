@@ -143,7 +143,28 @@ class VersionSchema(BaseModel):
 
 
 class HealthSchema(BaseModel):
+    """The process is alive. Deliberately says nothing else.
+
+    Liveness does not check the database, so it does not report on one -
+    a field carrying an unchecked default would be a small lie in the one
+    place a monitoring system trusts absolutely.
+    """
+
     status: str
+
+
+class ReadinessSchema(BaseModel):
+    """The service can serve traffic, and what it cannot serve.
+
+    `status` stays "ready" while the demo endpoints work: that is what the
+    platform health check asks, and taking a working demo offline would be a
+    strange way to report a missing database. `database` carries that news
+    instead - a probe reporting "ready" while silent about an absent database
+    asserts something untrue.
+    """
+
+    status: str
+    database: str
 
 
 class TransactionEntrySchema(BaseModel):

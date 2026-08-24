@@ -84,7 +84,11 @@ def test_every_node_reports_its_provenance(client: TestClient) -> None:
 
 def test_liveness_and_readiness_are_served(client: TestClient) -> None:
     assert client.get("/v1/health/live").json() == {"status": "live"}
-    assert client.get("/v1/health/ready").json() == {"status": "ready"}
+    # Readiness also reports the database, because "ready" alone would be
+    # silent about the one thing that stops half the API working.
+    ready = client.get("/v1/health/ready").json()
+    assert ready["status"] == "ready"
+    assert "database" in ready
 
 
 def test_version_reports_the_engine(client: TestClient) -> None:
@@ -139,3 +143,34 @@ def _scripts(client: TestClient) -> list[str]:
     scripts = re.findall(r"<script\b[^>]*>(.*?)</script>", page, flags=re.DOTALL)
     assert scripts, "expected the page to contain a script block"
     return scripts
+
+
+# ---------------------------------------------------------------- readiness
+
+
+def test_readiness_reports_the_database_state(client: TestClient) -> None:
+    """A probe that says "ready" while saying nothing about a missing database
+    is asserting something untrue. It reports both."""
+    body = client.get("/v1/health/ready").json()
+
+    assert body["status"] == "ready"
+    assert body["database"] in {"connected", "unconfigured", "unreachable"}
+
+
+def test_readiness_stays_ready_without_a_database(
+    monkeypatch: pytest.MonkeyPatch, client: TestClient
+) -> None:
+    """Deliberate: this path is the platform health check, and the demo
+    endpoints are in-memory. Failing it would take a working demo offline to
+    report a missing database."""
+    monkeypatch.setattr("offerdelta.api.main._database_state", lambda: "unconfigured")
+
+    response = client.get("/v1/health/ready")
+    assert response.status_code == 200
+    assert response.json()["database"] == "unconfigured"
+
+
+def test_the_demo_endpoints_do_not_need_a_database(client: TestClient) -> None:
+    """They are in-memory, and the deployed service has no database at all."""
+    assert client.get("/v1/demo/comparison").status_code == 200
+    assert client.get("/v1/demo/derivation").status_code == 200

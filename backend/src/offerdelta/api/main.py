@@ -17,6 +17,8 @@ from typing import Annotated, Final
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Response, status
 from fastapi.responses import FileResponse
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from offerdelta.api.presenters import present_comparison
@@ -25,6 +27,7 @@ from offerdelta.api.schemas import (
     ComparisonSchema,
     DerivationNodeSchema,
     HealthSchema,
+    ReadinessSchema,
     TransactionEntrySchema,
     TransactionStoredSchema,
     VersionSchema,
@@ -36,6 +39,7 @@ from offerdelta.application.transactions.enter_transaction import (
     ManualEntry,
     enter_transaction,
 )
+from offerdelta.config import get_settings
 from offerdelta.domain.common.errors import ValidationError
 from offerdelta.domain.transactions.fingerprint import FINGERPRINT_VERSION
 from offerdelta.domain.transactions.parsing import parse_amount
@@ -72,20 +76,42 @@ def index() -> FileResponse:
     return FileResponse(_STATIC / "index.html")
 
 
+#: The transaction endpoints need a database. Without one they can only
+#: return 500, so they are not registered at all rather than advertised in the
+#: public schema and then failing - a documented endpoint that cannot work is
+#: worse than an absent one.
+_DATABASE_CONFIGURED: Final = get_settings().database_available
+
+
 @app.get("/v1/health/live", response_model=HealthSchema)
 def live() -> HealthSchema:
     """The process is running."""
     return HealthSchema(status="live")
 
 
-@app.get("/v1/health/ready", response_model=HealthSchema)
-def ready() -> HealthSchema:
-    """The service can serve traffic.
+def _database_state() -> str:
+    """What the database is actually doing, checked rather than assumed."""
+    if not get_settings().database_available:
+        return "unconfigured"
+    try:
+        with get_engine().connect() as connection:
+            connection.execute(text("SELECT 1"))
+    except SQLAlchemyError:
+        # The DSN is never echoed, here least of all: this response is public.
+        return "unreachable"
+    return "connected"
 
-    Once PostgreSQL arrives in milestone 5 this checks the connection; for now
-    readiness and liveness are the same thing.
+
+@app.get("/v1/health/ready", response_model=ReadinessSchema)
+def ready() -> ReadinessSchema:
+    """The service can serve traffic, and says what it cannot serve.
+
+    Deliberately still "ready" without a database. The demo endpoints are
+    in-memory and work regardless, and this path is the platform health check -
+    failing it would take a working demo offline to report a missing database.
+    The `database` field carries that news instead.
     """
-    return HealthSchema(status="ready")
+    return ReadinessSchema(status="ready", database=_database_state())
 
 
 @app.get("/v1/version", response_model=VersionSchema)
@@ -181,6 +207,12 @@ def _session() -> Iterator[Session]:
     nothing behind, which is the property the whole import path is built on and
     the reason manual entry does not get its own weaker rule.
     """
+    if not _DATABASE_CONFIGURED:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "transaction storage is not configured on this deployment; "
+            "the demo endpoints are unaffected",
+        )
     with Session(get_engine()) as session:
         yield session
         session.commit()
@@ -188,6 +220,7 @@ def _session() -> Iterator[Session]:
 
 @app.post(
     "/v1/transactions",
+    include_in_schema=_DATABASE_CONFIGURED,
     response_model=TransactionStoredSchema,
     status_code=status.HTTP_201_CREATED,
 )
