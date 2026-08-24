@@ -19,10 +19,19 @@ from offerdelta.infrastructure.llm.anthropic import (
     AnthropicConfig,
     AnthropicProvider,
 )
+from offerdelta.infrastructure.llm.prompts import PROMPT_VERSION
 
 
-def build_provider(settings: Settings | None = None) -> AnthropicProvider | None:
-    """A live provider, or `None` when no key is configured."""
+def build_provider(
+    settings: Settings | None = None, *, prompt_version: str = PROMPT_VERSION
+) -> AnthropicProvider | None:
+    """A live provider, or `None` when no key is configured.
+
+    `prompt_version` names which recorded prompt to send. It is a keyword rather
+    than a setting because it belongs to one run, not to the environment: an
+    evaluation reproducing an archived score and the API serving traffic can
+    disagree about it and both be right.
+    """
     settings = settings or get_settings()
 
     if not settings.anthropic_api_key:
@@ -31,5 +40,6 @@ def build_provider(settings: Settings | None = None) -> AnthropicProvider | None
     config = AnthropicConfig(
         api_key=settings.anthropic_api_key,
         model=settings.anthropic_model or DEFAULT_MODEL,
+        prompt_version=prompt_version,
     )
     return AnthropicProvider(config=config)

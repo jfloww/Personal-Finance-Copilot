@@ -41,7 +41,7 @@ from offerdelta.infrastructure.llm.errors import (
 )
 from offerdelta.infrastructure.llm.prompts import (
     PROMPT_VERSION,
-    SYSTEM_PROMPT,
+    SYSTEM_PROMPTS,
     TOOL_NAME,
     build_tool_schema,
     render_transaction,
@@ -67,7 +67,7 @@ __all__ = [
     "API_VERSION",
     "DEFAULT_MODEL",
     "PROMPT_VERSION",
-    "SYSTEM_PROMPT",
+    "SYSTEM_PROMPTS",
     "TOOL_NAME",
     "AnthropicConfig",
     "AnthropicProvider",
