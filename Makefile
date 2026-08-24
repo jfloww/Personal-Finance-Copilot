@@ -6,10 +6,10 @@ install:
 	cd $(BACKEND) && uv sync
 
 fmt:
-	cd $(BACKEND) && uv run ruff format src tests transactions.py annotate.py validate_dataset.py && uv run ruff check --fix src tests transactions.py annotate.py validate_dataset.py
+	cd $(BACKEND) && uv run ruff format src tests annotate.py run_evaluation.py llm_smoke.py transactions.py validate_dataset.py && uv run ruff check --fix src tests annotate.py run_evaluation.py llm_smoke.py transactions.py validate_dataset.py
 
 lint:
-	cd $(BACKEND) && uv run ruff format --check src tests transactions.py annotate.py validate_dataset.py && uv run ruff check src tests transactions.py annotate.py validate_dataset.py
+	cd $(BACKEND) && uv run ruff format --check src tests annotate.py run_evaluation.py llm_smoke.py transactions.py validate_dataset.py && uv run ruff check src tests annotate.py run_evaluation.py llm_smoke.py transactions.py validate_dataset.py
 
 types:
 	cd $(BACKEND) && uv run mypy

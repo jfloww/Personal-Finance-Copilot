@@ -16,8 +16,8 @@ import subprocess
 import sys
 
 CHECKS: list[tuple[str, list[str]]] = [
-    ("format", ["ruff", "format", "--check", "src", "tests", "annotate.py", "transactions.py", "validate_dataset.py"]),
-    ("lint", ["ruff", "check", "src", "tests", "annotate.py", "transactions.py", "validate_dataset.py"]),
+    ("format", ["ruff", "format", "--check", "src", "tests", "annotate.py", "run_evaluation.py", "llm_smoke.py", "transactions.py", "validate_dataset.py"]),
+    ("lint", ["ruff", "check", "src", "tests", "annotate.py", "run_evaluation.py", "llm_smoke.py", "transactions.py", "validate_dataset.py"]),
     ("types", ["mypy"]),
     ("architecture", ["lint-imports"]),
     ("tests", ["pytest"]),
