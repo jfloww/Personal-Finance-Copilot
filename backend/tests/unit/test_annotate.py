@@ -348,3 +348,40 @@ def test_adjudication_is_idempotent(tmp_path: Path) -> None:
     row.final_label = "LIVING_GROCERY"
     session = Session(rows=[row], annotator="final", dataset=tmp_path / "d.csv")
     assert session.pending == []
+
+
+def test_a_dead_terminal_stops_instead_of_spinning(tmp_path: Path) -> None:
+    """isatty() reports a terminal on this platform even at EOF, so the
+    not-a-terminal guard passes and every prompt returns "". Without a limit
+    the loop reprompts forever and only Ctrl+C ends it."""
+    rows = [_row(), Row("t2", "OTHER", "-1.00", "2026-08-18", "OTHER")]
+    session = Session(rows=rows, annotator="a", dataset=tmp_path / "d.csv")
+
+    calls = 0
+
+    def dead(_prompt: str) -> str:
+        nonlocal calls
+        calls += 1
+        if calls > 50:
+            raise AssertionError("still spinning")
+        return ""
+
+    assert annotate(session, dead) == "no-input"
+    assert calls <= 5
+    assert rows[0].annotator_a_label == ""
+
+
+def test_a_typo_does_not_end_the_session(tmp_path: Path) -> None:
+    """Three empties in a row means gone; two mistakes means a person."""
+    session = Session(rows=[_row()], annotator="a", dataset=tmp_path / "d.csv")
+
+    assert annotate(session, _scripted(["", "", "l2"])) == "finished"
+    assert session.rows[0].annotator_a_label == CODES["l2"]
+
+
+def test_a_real_answer_resets_the_streak(tmp_path: Path) -> None:
+    rows = [_row(), Row("t2", "OTHER", "-1.00", "2026-08-18", "OTHER")]
+    session = Session(rows=rows, annotator="a", dataset=tmp_path / "d.csv")
+
+    assert annotate(session, _scripted(["", "", "l2", "", "", "c1"])) == "finished"
+    assert rows[1].annotator_a_label == CODES["c1"]

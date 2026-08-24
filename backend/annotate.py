@@ -59,6 +59,11 @@ DEFAULT_DATASET: Final = Path("data/eval/transactions.csv")
 #: large enough that a four-hundred-row session is not four hundred writes.
 SAVE_EVERY: Final = 10
 
+#: Consecutive empty answers before concluding the terminal is gone. Three is
+#: past accidental - a person who fat-fingers Enter twice gets told what the
+#: codes are, not thrown out.
+_NO_INPUT_LIMIT: Final = 3
+
 #: Column order from `evaluation.csv_loader.REQUIRED_COLUMNS`, plus the one
 #: optional column worth keeping: a date makes a disputed row findable in the
 #: original statement.
@@ -330,8 +335,33 @@ def _prompt_ambiguity(row: Row, ask: Callable[[str], str]) -> bool:
     return True
 
 
+def _print_header() -> None:
+    print(render_menu())
+    print()
+    print("  [enter] accept suggestion   [?] ambiguous   [s] skip   [u] undo   [q] save+quit")
+    print()
+
+
+def _rewind(session: Session, history: list[Row]) -> int | None:
+    """Clear the last decision and return the index to resume at."""
+    if not history:
+        print("  nothing to undo")
+        return None
+    previous = history.pop()
+    previous.set_label(session.annotator, "")
+    previous.acceptable_labels = ""
+    previous.ambiguity_note = ""
+    return session.rows.index(previous)
+
+
+def _is_settled(row: Row, annotator: str) -> bool:
+    if annotator == "final":
+        return bool(row.final_label) or not row.disputed
+    return bool(row.label_for(annotator))
+
+
 def annotate(session: Session, ask: Callable[[str], str]) -> str:
-    """Run one pass. Returns why it ended: "finished" or "quit"."""
+    """Run one pass. Returns why it ended: finished, quit, or no-input."""
     total = (
         sum(1 for row in session.rows if row.disputed)
         if session.annotator == "final"
@@ -340,18 +370,18 @@ def annotate(session: Session, ask: Callable[[str], str]) -> str:
     history: list[Row] = []
     since_save = 0
 
-    print(render_menu())
-    print("\n  [enter] accept suggestion   [?] ambiguous   [s] skip   [u] undo   [q] save+quit\n")
+    _print_header()
 
+    #: Consecutive entries that resolved to nothing. A terminal that has gone
+    #: away answers every prompt instantly with "", and `isatty()` cannot be
+    #: trusted to say so - it reports a terminal on this platform even when
+    #: stdin is at EOF. Without this the loop reprompts forever and the only
+    #: way out is Ctrl+C.
+    empty_streak = 0
     index = 0
     while index < len(session.rows):
         row = session.rows[index]
-        settled = (
-            row.final_label or not row.disputed
-            if session.annotator == "final"
-            else row.label_for(session.annotator)
-        )
-        if settled:
+        if _is_settled(row, session.annotator):
             index += 1
             continue
 
@@ -368,14 +398,9 @@ def annotate(session: Session, ask: Callable[[str], str]) -> str:
             continue
 
         if entry.lower() == "u":
-            if not history:
-                print("  nothing to undo")
-                continue
-            previous = history.pop()
-            previous.set_label(session.annotator, "")
-            previous.acceptable_labels = ""
-            previous.ambiguity_note = ""
-            index = session.rows.index(previous)
+            rewound = _rewind(session, history)
+            if rewound is not None:
+                index = rewound
             continue
 
         if entry == "?":
@@ -385,8 +410,19 @@ def annotate(session: Session, ask: Callable[[str], str]) -> str:
 
         label = suggestion if not entry and suggestion else resolve(entry)
         if label is None:
+            empty_streak = empty_streak + 1 if not entry else 0
+            if empty_streak >= _NO_INPUT_LIMIT:
+                print()
+                print(
+                    f"  {empty_streak} empty answers in a row: this terminal"
+                    " is not delivering input."
+                )
+                print("  Progress is saved. Try running it without `uv run`:")
+                print(f"      python annotate.py --resume --annotator={session.annotator}")
+                return "no-input"
             print(f"  no label matches {entry!r} - try a code, or a longer prefix")
             continue
+        empty_streak = 0
 
         row.set_label(session.annotator, label)
         if row.normalised_merchant:
