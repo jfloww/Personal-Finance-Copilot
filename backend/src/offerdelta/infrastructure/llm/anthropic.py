@@ -40,7 +40,7 @@ from offerdelta.infrastructure.llm.errors import (
 )
 from offerdelta.infrastructure.llm.prompts import (
     PROMPT_VERSION,
-    SYSTEM_PROMPT,
+    SYSTEM_PROMPTS,
     TOOL_NAME,
     build_tool_schema,
     render_transaction,
@@ -93,7 +93,23 @@ class AnthropicConfig:
     #: Ceiling for a single attempt. The retry budget is separate and longer.
     timeout_s: float = 30.0
 
+    #: Which recorded prompt to send. Defaults to the selected one; an
+    #: evaluation can name an older version to reproduce an archived score, or
+    #: a candidate to measure one against the same rows.
+    prompt_version: str = PROMPT_VERSION
+
+    @property
+    def system_prompt(self) -> str:
+        return SYSTEM_PROMPTS[self.prompt_version]
+
     def __post_init__(self) -> None:
+        if self.prompt_version not in SYSTEM_PROMPTS:
+            known = ", ".join(sorted(SYSTEM_PROMPTS))
+            raise ValidationError(
+                f"unknown prompt version {self.prompt_version!r}; recorded "
+                f"versions are {known}. Scores are only comparable within a "
+                f"version, so an unrecognised one is a typo, not a new prompt."
+            )
         if not self.api_key or not self.api_key.strip():
             raise ValidationError(
                 "no API key: set ANTHROPIC_API_KEY in the environment. It is "
@@ -142,7 +158,7 @@ class AnthropicProvider:
     @property
     def prompt_version(self) -> str:
         """Recorded with results, so a score names the prompt that produced it."""
-        return PROMPT_VERSION
+        return self.config.prompt_version
 
     def classify(self, request: LLMRequest) -> LLMResponse:
         """Ask the model, retrying only what is worth retrying.
@@ -189,7 +205,7 @@ class AnthropicProvider:
             "model": self.config.model,
             "max_tokens": self.config.max_tokens,
             "temperature": self.config.temperature,
-            "system": SYSTEM_PROMPT,
+            "system": self.config.system_prompt,
             "tools": [build_tool_schema(request.allowed_labels)],
             # Pinning the choice is what makes the output structured. Without
             # it the model may answer in prose, and then this is a parser.

@@ -83,7 +83,7 @@ strict = true
 warn_unreachable = true
 disallow_any_explicit = true
 plugins = ["pydantic.mypy"]
-files = ["src", "tests", "annotate.py", "build_eval_subset.py", "llm_smoke.py", "run_evaluation.py", "transactions.py", "validate_dataset.py"]
+files = ["src", "tests", "annotate.py", "build_eval_subset.py", "build_public_results.py", "llm_smoke.py", "run_evaluation.py", "transactions.py", "validate_dataset.py"]
 
 # Pydantic's BaseModel and BaseSettings carry explicit Any in their own
 # signatures, and a wire or environment boundary deals in untyped input by

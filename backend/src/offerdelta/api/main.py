@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from datetime import UTC, datetime
+from functools import lru_cache
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Annotated, Final
@@ -52,6 +53,12 @@ ENGINE_VERSION: Final = "0.1.0-skeleton"
 
 _STATIC = Path(__file__).parent / "static"
 
+#: Aggregate evaluation results, generated from the archived local runs by
+#: `build_public_results.py`. It lives in the package so it ships with the
+#: wheel, and it holds counts and rates only - the runs it summarises read real
+#: statements and an API key, and neither can leave the machine they ran on.
+_EVALUATION = _STATIC / "evaluation.json"
+
 #: Process-local, so it guards a single instance. Honest for one container and
 #: inadequate for two, which is why it sits behind a port — DynamoDB with
 #: conditional writes replaces it when the async path arrives.
@@ -60,6 +67,16 @@ _idempotency = IdempotencyService(InMemoryIdempotencyStore())
 app = FastAPI(
     title="Personal Finance Copilot",
     summary="Deterministic personal-finance engine with AI kept outside the calculation boundary",
+    description=(
+        "**This deployment runs in public demo mode.** Real financial ingestion "
+        "is disabled here by design: no database is attached, the transaction "
+        "endpoints are not registered, and no model API key is present. The "
+        "demo routes below compute from fixed in-memory profiles.\n\n"
+        "`/demo/evaluation/latest` publishes aggregate results from evaluation "
+        "runs performed locally against real statements. It carries counts and "
+        "rates only - no transactions, amounts, merchants, dates, or per-row "
+        "predictions."
+    ),
     docs_url="/docs",
 )
 
@@ -73,7 +90,53 @@ def _package_version() -> str:
 
 @app.get("/", include_in_schema=False)
 def index() -> FileResponse:
+    """The evaluation showcase: what was measured, and which prompt it selected."""
     return FileResponse(_STATIC / "index.html")
+
+
+@app.get("/demo/comparison", include_in_schema=False)
+def comparison_page() -> FileResponse:
+    """The deterministic engine, rendered with its full derivation.
+
+    Reads `/v1/demo/comparison`. Every amount stays a decimal string all the way
+    into the DOM - the page formats by string surgery rather than coercing to a
+    double, so what it prints is what the engine computed.
+    """
+    return FileResponse(_STATIC / "comparison.html")
+
+
+@lru_cache(maxsize=1)
+def _evaluation_payload() -> str:
+    """The published results, read once and served byte for byte.
+
+    Verbatim rather than parsed and re-serialised: the file is a generated
+    artifact committed to the repository, and round-tripping it here would
+    create a second place for the numbers to differ from it.
+    """
+    return _EVALUATION.read_text(encoding="utf-8")
+
+
+@app.get("/demo/evaluation/latest")
+def evaluation_results() -> Response:
+    """Aggregate results for the frozen validation benchmark.
+
+    Dataset counts, per-system scores, the prompt experiment and its rejection,
+    and per-label movement. Counts and rates only: the runs behind these numbers
+    read real bank statements and used a model API key, and neither is deployed.
+
+    "Frozen validation benchmark" rather than test set, deliberately. The v1
+    results informed the design of v2, so these rows have already influenced a
+    decision and can no longer be described as held out.
+    """
+    try:
+        payload = _evaluation_payload()
+    except OSError as error:  # pragma: no cover - the artifact is committed
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "evaluation results have not been generated for this build; "
+            "run build_public_results.py",
+        ) from error
+    return Response(content=payload, media_type="application/json")
 
 
 #: The transaction endpoints need a database. Without one they can only

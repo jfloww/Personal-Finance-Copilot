@@ -26,7 +26,11 @@ from offerdelta.infrastructure.llm.errors import (
     MalformedResponseError,
     RetryBudgetExhaustedError,
 )
-from offerdelta.infrastructure.llm.prompts import PROMPT_VERSION, TOOL_NAME
+from offerdelta.infrastructure.llm.prompts import (
+    PROMPT_VERSION,
+    SYSTEM_PROMPTS,
+    TOOL_NAME,
+)
 from offerdelta.infrastructure.llm.retry import FakeClock, RetryPolicy
 from offerdelta.infrastructure.llm.transport import FakeTransport, json_response
 
@@ -166,6 +170,39 @@ def test_the_prompt_version_travels_with_the_provider() -> None:
     provider, _ = _provider(json_response(200, _answer()))
 
     assert provider.prompt_version == PROMPT_VERSION
+
+
+def test_the_selected_prompt_is_the_one_sent_by_default() -> None:
+    provider, transport = _provider(json_response(200, _answer()))
+
+    provider.classify(_request())
+
+    assert json.loads(transport.requests[0].body)["system"] == SYSTEM_PROMPTS[PROMPT_VERSION]
+
+
+def test_an_older_prompt_version_can_be_replayed() -> None:
+    """An archived score is only reproducible if the prompt that produced it can
+    still be sent. Every scored version is kept, and this is how one is chosen."""
+    other = next(v for v in sorted(SYSTEM_PROMPTS) if v != PROMPT_VERSION)
+    transport = FakeTransport(responses=[json_response(200, _answer())])
+    provider = AnthropicProvider(
+        config=AnthropicConfig(api_key="sk-test-not-a-real-key", prompt_version=other),
+        transport=transport,
+        retry_policy=NO_JITTER,
+        clock=FakeClock(),
+    )
+
+    provider.classify(_request())
+
+    assert provider.prompt_version == other
+    assert json.loads(transport.requests[0].body)["system"] == SYSTEM_PROMPTS[other]
+
+
+def test_an_unrecorded_prompt_version_is_refused() -> None:
+    """A typo would otherwise run happily and record a score under a version
+    that never existed, which is worse than not running at all."""
+    with pytest.raises(ValidationError, match="unknown prompt version"):
+        AnthropicConfig(api_key="sk-test-not-a-real-key", prompt_version="categorise/v99")
 
 
 # --- Untrusted input -------------------------------------------------------

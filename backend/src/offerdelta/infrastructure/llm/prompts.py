@@ -35,6 +35,15 @@ from typing import Final
 #: Bump on every wording change. Scores recorded under an old version are not
 #: comparable with scores under a new one, and pretending otherwise is how a
 #: benchmark quietly stops meaning anything.
+#:
+#: Every scored version is kept in `SYSTEM_PROMPTS` rather than overwritten, so
+#: an archived score can still be reproduced from the code that produced it.
+#:
+#: v1 is the selected prompt. v2 was measured against the same frozen
+#: validation benchmark and rejected: it did not move LIVING_OTHER at all,
+#: while accuracy, weighted F1, cost, and tail latency all worsened. It is
+#: retained as a rejected experiment, not deleted - a change that was tried
+#: and measured is evidence, and deleting it would leave only the successes.
 PROMPT_VERSION: Final = "categorise/v1"
 
 #: The name the model must call. Also the mechanism that makes the output
@@ -42,7 +51,7 @@ PROMPT_VERSION: Final = "categorise/v1"
 #: the shapes the response can take.
 TOOL_NAME: Final = "categorise_transaction"
 
-SYSTEM_PROMPT: Final = """\
+_V1: Final = """\
 You classify personal bank transactions into a fixed set of categories.
 
 Rules:
@@ -61,6 +70,34 @@ Rules:
 
 Answer only by calling the supplied tool.\
 """
+
+
+#: v2 differs from v1 in one rule and nothing else: LIVING_OTHER is named as a
+#: last resort.
+#:
+#: Measured cause. On the 135-row holdout, v1 sent 17 rows to LIVING_OTHER for
+#: 0.056 precision, and three of the five most frequent confusions were
+#: DINING, GROCERY, and SUBSCRIPTIONS collapsing into it. v1 says "if none fits,
+#: choose the closest" while offering a category that is plausibly closest to
+#: everything - so the catch-all reads as a safe default rather than a
+#: last resort.
+_V2: Final = _V1.replace(
+    """- Choose exactly one label from the list supplied in the tool schema. If none
+  fits, choose the closest and lower your confidence.""",
+    """- Choose exactly one label from the list supplied in the tool schema. If none
+  fits, choose the closest and lower your confidence.
+- LIVING_OTHER is a last resort, not a default. Use it only when the
+  transaction is genuinely a living cost that no other category describes. An
+  unfamiliar merchant is not a reason to reach for it: judge what the
+  transaction most likely is. When torn between LIVING_OTHER and a specific
+  category, choose the specific one and lower your confidence instead.""",
+)
+
+#: Every version that has been scored, so an archived result stays reproducible.
+SYSTEM_PROMPTS: Final[dict[str, str]] = {
+    "categorise/v1": _V1,
+    "categorise/v2": _V2,
+}
 
 
 def render_transaction(

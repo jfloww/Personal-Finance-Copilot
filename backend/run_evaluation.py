@@ -39,6 +39,7 @@ from offerdelta.evaluation.rule_baseline import fit_rules
 from offerdelta.evaluation.splitting import merchant_disjoint_split
 from offerdelta.evaluation.validation import validate_labelled_csv
 from offerdelta.infrastructure.llm.factory import build_provider
+from offerdelta.infrastructure.llm.prompts import PROMPT_VERSION, SYSTEM_PROMPTS
 
 DEFAULT_PATH = Path("data/eval/transactions.csv")
 HOLDOUT_FRACTION = 0.3
@@ -56,10 +57,11 @@ PRICES: dict[str, tuple[Decimal, Decimal]] = {
     "claude-opus-5": (Decimal(5), Decimal(25)),
 }
 
-#: Used only for the pre-run estimate, which must not depend on the model
-#: resolving successfully. The most expensive supported model, so the estimate
-#: over-states rather than under-states.
-_ESTIMATE_PRICES = max(PRICES.values(), key=lambda pair: pair[1])
+#: Fallback for the pre-run estimate when the model is not in the table: the
+#: most expensive one known, so an unknown model over-states rather than
+#: under-states. A known model is priced at its own rate - an estimate five
+#: times the real cost cannot do its job, which is to let someone say no.
+_UNKNOWN_MODEL_PRICES = max(PRICES.values(), key=lambda pair: pair[1])
 
 
 def prices_for(model: str) -> tuple[Decimal | None, Decimal | None]:
@@ -68,11 +70,19 @@ def prices_for(model: str) -> tuple[Decimal | None, Decimal | None]:
     return found if found is not None else (None, None)
 
 
-#: Rough per-transaction token cost, for the estimate shown before a live run.
-#: Derived from the offline smoke output: the prompt and schema dominate, and
-#: the tool call back is short. An estimate, labelled as one.
-ESTIMATED_INPUT_TOKENS = 450
-ESTIMATED_OUTPUT_TOKENS = 40
+#: Per-transaction token cost, for the estimate shown before a live run.
+#:
+#: Measured, not guessed: a 25-row live run against claude-haiku-4-5 used
+#: 32,521 input and 2,320 output tokens, i.e. ~1,301 in and ~93 out per call.
+#: The earlier figures were derived from an offline smoke test and were nearly
+#: three times too low, so the estimate under-stated the cost - the one
+#: direction it must never err in, since its whole job is to let someone say no.
+#:
+#: Rounded up from the measurement to keep it an upper bound. The prompt carries
+#: the full taxonomy on every call, so input dominates and grows with the
+#: category list.
+ESTIMATED_INPUT_TOKENS = 1400
+ESTIMATED_OUTPUT_TOKENS = 110
 
 
 def _stand_in() -> ScriptedProvider:
@@ -92,14 +102,16 @@ def _stand_in() -> ScriptedProvider:
     )
 
 
-def _estimate_cost(rows: int) -> Decimal:
+def _estimate_cost(rows: int, model: str) -> Decimal:
     """What a live run would cost, before it is made.
 
     The hybrid calls the model only where the rules abstain, so the true cost is
     below this. Over-estimating is the right direction for a number whose job is
     to let someone say no.
     """
-    input_price, output_price = _ESTIMATE_PRICES
+    input_price, output_price = prices_for(model)
+    if input_price is None or output_price is None:
+        input_price, output_price = _UNKNOWN_MODEL_PRICES
     input_cost = Decimal(rows * ESTIMATED_INPUT_TOKENS) / Decimal(1_000_000) * input_price
     output_cost = Decimal(rows * ESTIMATED_OUTPUT_TOKENS) / Decimal(1_000_000) * output_price
     # Twice: the LLM system and the hybrid are scored separately, and each makes
@@ -107,7 +119,33 @@ def _estimate_cost(rows: int) -> Decimal:
     return (input_cost + output_cost) * 2
 
 
-def _resolve_provider(live: bool) -> tuple[LLMProvider, bool]:
+def _confirm_live_run(rows: int, model: str, prompt: str, *, assume_yes: bool) -> bool:
+    """Show what a live run will cost, and get a yes before spending it.
+
+    The estimate is printed whether or not it is going to be asked about, so a
+    `--yes` run still leaves a record of what it expected to spend next to what
+    it actually did.
+    """
+    rate_in, rate_out = prices_for(model)
+    basis = (
+        f"at {rate_in}/{rate_out} per Mtok"
+        if rate_in is not None
+        else "priced at the dearest known model; this one is not in the table"
+    )
+    print(f"model            {model}")
+    print(f"prompt           {prompt}")
+    print(f"rows to score    {rows}")
+    print(f"estimated cost   ${_estimate_cost(rows, model):.4f} upper bound, {basis}")
+
+    if not assume_yes and input("\nsend these requests? [y/N] ").strip().lower() != "y":
+        print("nothing was sent")
+        return False
+
+    print()
+    return True
+
+
+def _resolve_provider(live: bool, prompt_version: str) -> tuple[LLMProvider, bool]:
     """Pick the provider, and say plainly which one came back.
 
     Returns the provider and whether it is live. Never prints, logs, or returns
@@ -116,7 +154,7 @@ def _resolve_provider(live: bool) -> tuple[LLMProvider, bool]:
     if not live:
         return _stand_in(), False
 
-    provider = build_provider(get_settings())
+    provider = build_provider(get_settings(), prompt_version=prompt_version)
     if provider is None:
         print("--live was requested but ANTHROPIC_API_KEY is not set.")
         print("Add it to backend/.env or the environment. Nothing was sent.")
@@ -159,6 +197,16 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="skip the cost confirmation prompt on a live run",
     )
+    parser.add_argument(
+        "--prompt",
+        default=PROMPT_VERSION,
+        choices=sorted(SYSTEM_PROMPTS),
+        metavar="VERSION",
+        help=(
+            "which recorded prompt to send (default: the selected one). Naming "
+            "an older version reproduces the score archived under it."
+        ),
+    )
     return parser
 
 
@@ -198,19 +246,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f"limited to the first {len(holdout)} holdout rows of {len(split.holdout)}")
         print("a partial holdout is a smoke test, not a benchmark result\n")
 
-    provider, is_live = _resolve_provider(args.live)
+    provider, is_live = _resolve_provider(args.live, args.prompt)
 
-    if is_live:
-        estimate = _estimate_cost(len(holdout))
-        print(f"model            {provider.model}")
-        print(f"rows to score    {len(holdout)}")
-        print(f"estimated cost   ${estimate:.4f} (upper bound; the hybrid calls less often)")
-        if not args.yes:
-            answer = input("\nsend these requests? [y/N] ").strip().lower()
-            if answer != "y":
-                print("nothing was sent")
-                return 0
-        print()
+    if is_live and not _confirm_live_run(
+        len(holdout), provider.model, args.prompt, assume_yes=args.yes
+    ):
+        return 0
 
     rules = fit_rules(split.development)
     llm = LLMCategoriser(provider)

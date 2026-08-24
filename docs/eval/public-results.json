@@ -1,0 +1,282 @@
+{
+  "generated_at": "2026-08-24T18:58:10+00:00",
+  "scope": "Aggregate results only. No transactions, amounts, merchants, dates, or per-row predictions appear here. Real financial ingestion is disabled in public demo mode by design.",
+  "dataset_flow": {
+    "imported_transactions": 742,
+    "accounts": 7,
+    "banks": 3,
+    "labelled_rows": 400,
+    "validation_benchmark_rows": 135,
+    "distinct_merchants_in_benchmark": 60,
+    "double_annotated_rows": 400,
+    "raw_annotator_agreement": 0.9185,
+    "cohens_kappa": 0.9055,
+    "label_space_size": 33
+  },
+  "method": {
+    "benchmark": "frozen validation benchmark",
+    "rows": 135,
+    "why_not_a_test_set": "The v1 results informed the design of v2, so these rows have already influenced a decision. Calling them a held-out test set would claim more than they can still support.",
+    "split": "merchant-disjoint, assigned by salted hash rather than shuffled",
+    "merchants_on_both_sides": 0,
+    "model": "claude-haiku-4-5",
+    "held_constant_across_prompts": [
+      "model",
+      "split",
+      "taxonomy",
+      "scoring",
+      "inference settings"
+    ]
+  },
+  "systems": [
+    {
+      "name": "rule baseline (no model)",
+      "macro_f1": 0.0464,
+      "weighted_f1": 0.0549,
+      "accuracy": 0.0667,
+      "coverage": 0.2,
+      "abstentions": 108,
+      "input_tokens": null,
+      "output_tokens": null,
+      "cost_usd": null,
+      "cost_per_row_usd": null,
+      "p50_latency_ms": null,
+      "p95_latency_ms": null
+    },
+    {
+      "name": "claude-haiku-4-5, prompt categorise/v1",
+      "macro_f1": 0.4277,
+      "weighted_f1": 0.7201,
+      "accuracy": 0.6593,
+      "coverage": 1.0,
+      "abstentions": 0,
+      "input_tokens": 176057,
+      "output_tokens": 12862,
+      "cost_usd": 0.2404,
+      "cost_per_row_usd": 0.00178,
+      "p50_latency_ms": 1358,
+      "p95_latency_ms": 1859
+    },
+    {
+      "name": "claude-haiku-4-5, prompt categorise/v2",
+      "macro_f1": 0.4397,
+      "weighted_f1": 0.7108,
+      "accuracy": 0.6519,
+      "coverage": 1.0,
+      "abstentions": 0,
+      "input_tokens": 187532,
+      "output_tokens": 12828,
+      "cost_usd": 0.2517,
+      "cost_per_row_usd": 0.001864,
+      "p50_latency_ms": 1358,
+      "p95_latency_ms": 3000
+    }
+  ],
+  "prompt_experiment": {
+    "status": "rejected experiment",
+    "hypothesis": "LIVING_OTHER was absorbing rows that belonged elsewhere: it was predicted 18 times against a true support of 1. Naming it a last resort rather than a default should reduce that.",
+    "controlled_change": "One rule added to the system prompt - five lines added, none removed, nothing else touched. Same 135 rows, same model, same split, same taxonomy, same scoring.",
+    "outcome": {
+      "target_unmoved": "LIVING_OTHER F1 was 0.1053 before and 0.1053 after. The rule did not touch the failure it was written for.",
+      "categories_regressed": [
+        "INCOME",
+        "LIVING_GROCERY",
+        "REFUND",
+        "TRANSFER"
+      ],
+      "categories_improved": [
+        "LIVING_SUBSCRIPTIONS",
+        "LIVING_TRAVEL"
+      ],
+      "v1_is_cheaper_by_pct": 4.5,
+      "v1_p95_latency_lower_by_ms": 1141
+    },
+    "why_macro_f1_rose_anyway": "Macro F1 divides by the number of labels in play, and that set is the union of labels the benchmark contains and labels the system predicts. v2 stopped predicting LIVING_GYM, which is never correct here, so its denominator fell from 21 to 20. The summed per-label F1 dropped, from 8.9814 to 8.7936 - the mean rose because the divisor shrank, not because the system got better at any category.",
+    "macro_denominator": {
+      "v1": {
+        "labels_in_average": 21,
+        "labels_never_correct": [
+          "COMMUTE_PARKING_WORK",
+          "COMMUTE_TRANSIT_FARE",
+          "HEALTH_OUT_OF_POCKET",
+          "HOUSING_PARKING_RESIDENTIAL",
+          "LIVING_CARD_FEE",
+          "LIVING_EDUCATION",
+          "LIVING_GYM",
+          "LIVING_VEHICLE_FIXED"
+        ],
+        "sum_of_f1": 8.9814
+      },
+      "v2": {
+        "labels_in_average": 20,
+        "labels_never_correct": [
+          "COMMUTE_PARKING_WORK",
+          "COMMUTE_TRANSIT_FARE",
+          "HEALTH_OUT_OF_POCKET",
+          "HOUSING_PARKING_RESIDENTIAL",
+          "LIVING_CARD_FEE",
+          "LIVING_EDUCATION",
+          "LIVING_VEHICLE_FIXED"
+        ],
+        "sum_of_f1": 8.7936
+      }
+    },
+    "decision": "rejected",
+    "selected_prompt": "categorise/v1",
+    "reasoning": "Macro F1 is not a misleading metric - it is the one that stops a model hiding a rare class it ignores, which is why it is the headline here. Deciding on macro F1 alone is what misleads. It moved +0.0120 while accuracy, weighted F1, cost, and tail latency all moved the wrong way, four categories regressed against two improvements, and the rule never touched the failure it targeted. Read together, those say reject.",
+    "caveat": "A single A/B with no repeated runs, so run-to-run variance is not separated from the effect of the prompt.",
+    "per_label_movement": [
+      {
+        "label": "COMMUTE_PARKING_WORK",
+        "support": 0,
+        "v1": 0.0,
+        "v2": 0.0,
+        "delta": 0.0
+      },
+      {
+        "label": "COMMUTE_TRANSIT_FARE",
+        "support": 0,
+        "v1": 0.0,
+        "v2": 0.0,
+        "delta": 0.0
+      },
+      {
+        "label": "HEALTH_OUT_OF_POCKET",
+        "support": 0,
+        "v1": 0.0,
+        "v2": 0.0,
+        "delta": 0.0
+      },
+      {
+        "label": "HOUSING_PARKING_RESIDENTIAL",
+        "support": 1,
+        "v1": 0.0,
+        "v2": 0.0,
+        "delta": 0.0
+      },
+      {
+        "label": "HOUSING_RENT_OR_MORTGAGE",
+        "support": 2,
+        "v1": 1.0,
+        "v2": 1.0,
+        "delta": 0.0
+      },
+      {
+        "label": "HOUSING_UTILITIES",
+        "support": 1,
+        "v1": 0.6667,
+        "v2": 0.6667,
+        "delta": 0.0
+      },
+      {
+        "label": "INCOME",
+        "support": 5,
+        "v1": 1.0,
+        "v2": 0.8889,
+        "delta": -0.1111
+      },
+      {
+        "label": "LIVING_CARD_FEE",
+        "support": 3,
+        "v1": 0.0,
+        "v2": 0.0,
+        "delta": 0.0
+      },
+      {
+        "label": "LIVING_CLOTHING",
+        "support": 4,
+        "v1": 1.0,
+        "v2": 1.0,
+        "delta": 0.0
+      },
+      {
+        "label": "LIVING_DINING",
+        "support": 37,
+        "v1": 0.8065,
+        "v2": 0.8065,
+        "delta": 0.0
+      },
+      {
+        "label": "LIVING_EDUCATION",
+        "support": 1,
+        "v1": 0.0,
+        "v2": 0.0,
+        "delta": 0.0
+      },
+      {
+        "label": "LIVING_ENTERTAINMENT",
+        "support": 3,
+        "v1": 0.3333,
+        "v2": 0.3333,
+        "delta": 0.0
+      },
+      {
+        "label": "LIVING_GROCERY",
+        "support": 10,
+        "v1": 0.5882,
+        "v2": 0.5556,
+        "delta": -0.0326
+      },
+      {
+        "label": "LIVING_GYM",
+        "support": 0,
+        "v1": 0.0,
+        "v2": null,
+        "delta": null
+      },
+      {
+        "label": "LIVING_INSURANCE",
+        "support": 9,
+        "v1": 1.0,
+        "v2": 1.0,
+        "delta": 0.0
+      },
+      {
+        "label": "LIVING_OTHER",
+        "support": 1,
+        "v1": 0.1053,
+        "v2": 0.1053,
+        "delta": 0.0
+      },
+      {
+        "label": "LIVING_SUBSCRIPTIONS",
+        "support": 7,
+        "v1": 0.2667,
+        "v2": 0.2857,
+        "delta": 0.019
+      },
+      {
+        "label": "LIVING_TRAVEL",
+        "support": 22,
+        "v1": 0.7059,
+        "v2": 0.7428,
+        "delta": 0.0369
+      },
+      {
+        "label": "LIVING_VEHICLE_FIXED",
+        "support": 0,
+        "v1": 0.0,
+        "v2": 0.0,
+        "delta": 0.0
+      },
+      {
+        "label": "REFUND",
+        "support": 12,
+        "v1": 0.6667,
+        "v2": 0.5883,
+        "delta": -0.0784
+      },
+      {
+        "label": "TRANSFER",
+        "support": 17,
+        "v1": 0.8421,
+        "v2": 0.8205,
+        "delta": -0.0216
+      }
+    ]
+  },
+  "backlog": [
+    "LIVING_TRAVEL is still mistaken for COMMUTE_TRANSIT_FARE more often than anything else. A v3 on that boundary is deferred, not dropped.",
+    "An OpenAI adapter, to score a second vendor's model on this same frozen benchmark with the labels, split, and scoring unchanged."
+  ]
+}
