@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
+from typing import Final
 
 import pytest
 from fastapi.testclient import TestClient
@@ -26,6 +27,26 @@ from offerdelta.infrastructure.llm.prompts import PROMPT_VERSION, SYSTEM_PROMPTS
 #: `backend/tests/contract/x.py` -> repository root.
 _ROOT = Path(__file__).resolve().parents[3]
 _ARTIFACT = _ROOT / "docs" / "eval" / "public-results.json"
+
+#: Merchants and counterparties that appear in the imported statements. None of
+#: them may reach a public route - not in the payload, and not in page copy
+#: either. A real merchant used as a throwaway example in prose still says where
+#: somebody shops, and it is not worth the sentence it improves.
+FORBIDDEN: Final = (
+    "kroger",
+    "tesla",
+    "zelle",
+    "starbucks",
+    "amex",
+    "american express",
+    "chase",
+    "capital one",
+    "state farm",
+    "person_",
+)
+
+#: Every page the deployment serves.
+PAGES: Final = ("/", "/demo/comparison")
 
 
 @pytest.fixture
@@ -137,20 +158,18 @@ def test_no_merchant_or_counterparty_name_is_published(published: dict[str, obje
     """Label names are taxonomy constants. Anything else that reads like a
     merchant string got here from a transaction."""
     text = " ".join(_strings(published)).lower()
-    forbidden = (
-        "kroger",
-        "tesla",
-        "zelle",
-        "starbucks",
-        "amex",
-        "american express",
-        "chase",
-        "capital one",
-        "state farm",
-        "person_",
-    )
-    found = [name for name in forbidden if name in text]
+    found = [name for name in FORBIDDEN if name in text]
     assert found == [], f"merchant or counterparty names published: {found}"
+
+
+@pytest.mark.parametrize("page", PAGES)
+def test_no_merchant_name_appears_in_page_copy(client: TestClient, page: str) -> None:
+    """The payload was scanned from the first draft; the prose around it was
+    not, and a real merchant went out in an example sentence explaining the
+    merchant-disjoint split. Both surfaces are public, so both are scanned."""
+    text = client.get(page).text.lower()
+    found = [name for name in FORBIDDEN if name in text]
+    assert found == [], f"{page} names merchants or counterparties: {found}"
 
 
 def test_no_credential_is_published(published: dict[str, object]) -> None:
