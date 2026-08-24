@@ -17,6 +17,10 @@ from fastapi.testclient import TestClient
 
 from offerdelta.api.main import app
 
+#: The page that renders money. The root is the evaluation showcase, which
+#: renders scores and has no amounts to get wrong.
+_PAGE = "/demo/comparison"
+
 
 @pytest.fixture
 def client() -> TestClient:
@@ -96,8 +100,10 @@ def test_version_reports_the_engine(client: TestClient) -> None:
     assert body["engine"] == "0.1.0-skeleton"
 
 
-def test_the_page_is_served_at_the_root(client: TestClient) -> None:
-    response = client.get("/")
+def test_the_comparison_page_is_served(client: TestClient) -> None:
+    """The root is the evaluation showcase; the money rules below govern the
+    comparison page, which is the only one that renders amounts."""
+    response = client.get(_PAGE)
     assert response.status_code == 200
     assert "text/html" in response.headers["content-type"]
 
@@ -139,7 +145,7 @@ def test_displayed_amounts_come_from_the_string_formatter(client: TestClient) ->
 
 def _scripts(client: TestClient) -> list[str]:
     """The page's executable blocks, excluding prose that merely discusses them."""
-    page = client.get("/").text
+    page = client.get(_PAGE).text
     scripts = re.findall(r"<script\b[^>]*>(.*?)</script>", page, flags=re.DOTALL)
     assert scripts, "expected the page to contain a script block"
     return scripts

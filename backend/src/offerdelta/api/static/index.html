@@ -3,13 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Personal Finance Copilot — Offer Comparison</title>
+<title>Personal Finance Copilot — Evaluation</title>
+<meta name="description" content="A deterministic personal-finance engine with the language model kept outside the calculation boundary, and the measurements that decided which prompt ships.">
 <style>
-  /* ── Palette ──────────────────────────────────────────────────────────
-     Gain/loss hues validated for colour-vision deficiency rather than
-     chosen by eye: blue↔orange separates under protanopia where the
-     conventional green↔red pair collapses. Dark steps are their own
-     values, not a flip of the light ones.                              */
+  /* Same palette as the comparison demo: one project, one identity. Gain/loss
+     hues separate under protanopia, where the conventional green/red pair
+     collapses. Dark steps are their own values, not a flip of the light ones. */
   :root {
     --surface:      #f2f4f6;
     --panel:        #ffffff;
@@ -42,7 +41,6 @@
   }
 
   *, *::before, *::after { box-sizing: border-box; }
-
   html { -webkit-text-size-adjust: 100%; }
 
   body {
@@ -52,226 +50,427 @@
     color: var(--ink);
     font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
     font-size: 15px;
-    line-height: 1.5;
+    line-height: 1.55;
     -webkit-font-smoothing: antialiased;
   }
 
-  main { max-width: 60rem; margin: 0 auto; }
+  main { max-width: 54rem; margin: 0 auto; }
 
-  /* ── The ledger spine ─────────────────────────────────────────────────
-     Every figure on the page lands in one right-aligned monospace column.
-     Rows are grids sharing a template, so the eye reads a single spine
-     down the whole document regardless of nesting depth.                */
-  .row {
-    display: grid;
-    grid-template-columns: 1fr minmax(7.5rem, auto);
-    align-items: baseline;
-    gap: 0 1.25rem;
-    padding: .45rem 0;
-  }
-  .num {
-    font-family: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
-    font-variant-numeric: tabular-nums;
-    font-feature-settings: "tnum" 1;
-    text-align: right;
-    white-space: nowrap;
-    letter-spacing: -.01em;
-  }
-  .gain { color: var(--gain); }
-  .loss { color: var(--loss); }
-
-  /* ── Section furniture ───────────────────────────────────────────────
-     Field labels, as on a form — these are sections of a document, not a
-     numbered sequence, so no 01/02/03.                                  */
-  .field-label {
-    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-    font-size: .69rem;
-    letter-spacing: .13em;
-    text-transform: uppercase;
-    color: var(--ink-3);
-    padding-bottom: .5rem;
-    border-bottom: 1px solid var(--rule);
-    margin: 3.5rem 0 1rem;
-  }
-  section:first-of-type .field-label { margin-top: 0; }
-
-  /* ── Masthead ─────────────────────────────────────────────────────── */
   header { padding: 4rem 0 0; }
-  .route {
-    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-    font-size: .72rem;
-    letter-spacing: .1em;
-    text-transform: uppercase;
-    color: var(--ink-3);
-  }
-  .route b { color: var(--ink-2); font-weight: 500; }
   h1 {
-    font-size: clamp(1.85rem, 5.2vw, 2.9rem);
-    line-height: 1.08;
-    letter-spacing: -.033em;
-    font-weight: 620;
-    margin: .7rem 0 0;
-    max-width: 22ch;
+    margin: 0;
+    font-size: clamp(1.7rem, 4vw, 2.4rem);
+    letter-spacing: -0.02em;
+    line-height: 1.15;
   }
   .standfirst {
+    margin: .9rem 0 0;
+    max-width: 40rem;
     color: var(--ink-2);
-    max-width: 54ch;
-    margin: 1rem 0 0;
+    font-size: 1.05rem;
   }
 
-  /* ── Verdict ──────────────────────────────────────────────────────── */
-  .verdict {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
-    gap: 1px;
-    background: var(--rule);
+  section { margin-top: 3.25rem; }
+  h2 {
+    margin: 0 0 .3rem;
+    font-size: .78rem;
+    font-weight: 650;
+    letter-spacing: .09em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+  h3 { margin: 1.6rem 0 .4rem; font-size: 1rem; letter-spacing: -0.01em; }
+  p { margin: .6rem 0; max-width: 42rem; color: var(--ink-2); }
+  p.lead { color: var(--ink); }
+
+  .panel {
+    background: var(--panel);
     border: 1px solid var(--rule);
-    border-radius: 3px;
-    overflow: hidden;
+    border-radius: 10px;
+    padding: 1.1rem 1.25rem;
+    margin-top: .85rem;
   }
-  .metric { background: var(--panel); padding: 1.15rem 1.25rem 1.25rem; }
-  .metric .k {
-    font-size: .74rem; color: var(--ink-3); letter-spacing: .02em;
-    display: block; margin-bottom: .4rem;
+  .panel > :first-child { margin-top: 0; }
+  .panel > :last-child { margin-bottom: 0; }
+
+  .notice {
+    border-left: 3px solid var(--assumed);
+    background: var(--panel);
+    border-radius: 0 8px 8px 0;
+    padding: .85rem 1.1rem;
+    margin-top: 1.5rem;
   }
-  .metric .v {
-    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  .notice p { margin: .25rem 0; max-width: 44rem; }
+  .notice strong { color: var(--ink); }
+
+  .flow {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .5rem;
+    margin-top: .9rem;
+    align-items: stretch;
+  }
+  .step {
+    flex: 1 1 8.5rem;
+    background: var(--panel);
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    padding: .7rem .85rem;
+  }
+  .step .n {
+    font-size: 1.35rem;
+    font-weight: 640;
+    letter-spacing: -0.02em;
     font-variant-numeric: tabular-nums;
-    font-size: 1.5rem; font-weight: 600; letter-spacing: -.025em;
+  }
+  .step .l { font-size: .8rem; color: var(--ink-3); line-height: 1.35; }
+
+  .scroll { overflow-x: auto; margin-top: .85rem; }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    min-width: 34rem;
+    font-variant-numeric: tabular-nums;
+    font-size: .88rem;
+  }
+  th, td {
+    text-align: right;
+    padding: .48rem .6rem;
+    border-bottom: 1px solid var(--rule);
+    white-space: nowrap;
+  }
+  th {
+    font-size: .72rem;
+    letter-spacing: .05em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    font-weight: 600;
+    border-bottom-color: var(--rule-strong);
+  }
+  th:first-child, td:first-child { text-align: left; white-space: normal; }
+  tbody tr.selected { background: var(--gain-wash); }
+  tbody tr.rejected { background: var(--loss-wash); }
+  td.up { color: var(--gain); }
+  td.down { color: var(--loss); }
+  td.flat { color: var(--ink-3); }
+
+  .tag {
+    display: inline-block;
+    font-size: .68rem;
+    font-weight: 650;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    padding: .12rem .42rem;
+    border-radius: 4px;
+    margin-left: .45rem;
+    vertical-align: .08em;
+  }
+  .tag.sel { color: var(--gain); background: var(--gain-wash); border: 1px solid var(--gain); }
+  .tag.rej { color: var(--loss); background: var(--loss-wash); border: 1px solid var(--loss); }
+
+  ol.steps { margin: .9rem 0 0; padding: 0; list-style: none; counter-reset: s; }
+  ol.steps > li {
+    counter-increment: s;
+    position: relative;
+    padding: 0 0 1.15rem 2.1rem;
+    border-left: 1px solid var(--rule-strong);
+    margin-left: .6rem;
+  }
+  ol.steps > li:last-child { border-left-color: transparent; padding-bottom: 0; }
+  ol.steps > li::before {
+    content: counter(s);
+    position: absolute;
+    left: -0.72rem;
+    top: 0;
+    width: 1.45rem;
+    height: 1.45rem;
+    border-radius: 50%;
+    background: var(--panel);
+    border: 1px solid var(--rule-strong);
+    color: var(--ink-3);
+    font-size: .72rem;
+    font-weight: 650;
+    display: grid;
+    place-items: center;
+  }
+  ol.steps b { display: block; color: var(--ink); font-size: .95rem; }
+  ol.steps p { margin: .2rem 0 0; }
+
+  code, .mono {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    font-size: .88em;
+  }
+  code { color: var(--ink); background: var(--gain-wash); padding: .05rem .3rem; border-radius: 3px; }
+
+  ul.plain { margin: .6rem 0; padding-left: 1.15rem; color: var(--ink-2); max-width: 42rem; }
+  ul.plain li { margin: .3rem 0; }
+
+  .links { display: flex; flex-wrap: wrap; gap: .55rem; margin-top: 1rem; }
+  .links a {
     display: block;
+    flex: 1 1 12rem;
+    background: var(--panel);
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    padding: .7rem .9rem;
+    text-decoration: none;
+    color: var(--ink);
   }
-  .metric .sub { font-size: .76rem; color: var(--ink-3); margin-top: .3rem; display: block; }
+  .links a:hover { border-color: var(--rule-strong); }
+  .links b { display: block; font-size: .92rem; }
+  .links span { font-size: .78rem; color: var(--ink-3); }
 
-  /* ── Chart ────────────────────────────────────────────────────────── */
-  .chart-wrap { position: relative; background: var(--panel);
-    border: 1px solid var(--rule); border-radius: 3px; padding: 1.25rem 1rem .5rem; }
-  svg { display: block; width: 100%; height: auto; overflow: visible; }
-  .tip {
-    position: absolute; pointer-events: none; opacity: 0;
-    transform: translate(-50%, -100%);
-    background: var(--ink); color: var(--surface);
-    padding: .35rem .55rem; border-radius: 3px; font-size: .74rem;
-    font-family: ui-monospace, Menlo, monospace; white-space: nowrap;
-    transition: opacity .1s linear;
+  footer {
+    margin-top: 4rem;
+    padding-top: 1.2rem;
+    border-top: 1px solid var(--rule);
+    color: var(--ink-3);
+    font-size: .82rem;
   }
-  .tip.on { opacity: 1; }
+  footer a { color: var(--ink-2); }
 
-  /* ── Bars ─────────────────────────────────────────────────────────── */
-  .bars { border: 1px solid var(--rule); border-radius: 3px;
-    background: var(--panel); padding: .35rem 1.25rem; }
-  .bar-row { display: grid; grid-template-columns: minmax(0,1fr) 8.5rem;
-    align-items: center; gap: 0 1.25rem; padding: .5rem 0;
-    border-bottom: 1px solid var(--rule); }
-  .bar-row:last-child { border-bottom: 0; }
-  .bar-track { position: relative; height: 1.45rem; display: flex; align-items: center; }
-  .bar-label { position: absolute; left: 0; right: 0; padding: 0 .55rem;
-    font-size: .84rem; z-index: 2; display: flex; align-items: center; gap: .45rem; }
-  .bar-fill { position: absolute; top: 2px; bottom: 2px; border-radius: 2px; }
-
-  /* ── Derivation ───────────────────────────────────────────────────── */
-  .tree { border: 1px solid var(--rule); border-radius: 3px;
-    background: var(--panel); padding: .35rem 1.25rem; }
-  details > summary { list-style: none; cursor: pointer; border-radius: 2px; }
-  details > summary::-webkit-details-marker { display: none; }
-  summary:focus-visible { outline: 2px solid var(--gain); outline-offset: 2px; }
-  .node > .row { border-bottom: 1px solid var(--rule); }
-  .node:last-child > .row, .node:last-child > details > summary > .row { border-bottom: 0; }
-  details > summary > .row { border-bottom: 1px solid var(--rule); }
-  .kids { margin-left: 1.15rem; border-left: 1px solid var(--rule); padding-left: .9rem; }
-  .name { min-width: 0; }
-  .name b { font-weight: 550; }
-  .twist { color: var(--ink-3); font-size: .62rem; width: .8rem;
-    display: inline-block; transition: transform .12s ease; }
-  details[open] > summary .twist { transform: rotate(90deg); }
-  .formula {
-    display: block; font-family: ui-monospace, Menlo, Consolas, monospace;
-    font-size: .71rem; color: var(--ink-3); margin-top: .12rem;
-    overflow-wrap: anywhere;
-  }
-  .badge {
-    font-family: ui-monospace, Menlo, monospace;
-    font-size: .6rem; letter-spacing: .06em; text-transform: uppercase;
-    padding: .1rem .3rem; border-radius: 2px; white-space: nowrap;
-    border: 1px solid currentColor; opacity: .85;
-  }
-  .b-ASSUMED { color: var(--assumed); }
-  .b-USER_CONFIRMED { color: var(--gain); }
-  .b-SOURCED { color: var(--gain); }
-  .b-DERIVED { color: var(--ink-3); }
-
-  /* ── Panels & notes ──────────────────────────────────────────────── */
-  .panel { border: 1px solid var(--rule); border-radius: 3px;
-    background: var(--panel); padding: 1.15rem 1.25rem; }
-  .note { color: var(--ink-2); font-size: .87rem; margin: .5rem 0 0; }
-  .flag {
-    display: inline-flex; align-items: center; gap: .4rem;
-    border: 1px solid var(--loss); color: var(--loss);
-    background: var(--loss-wash);
-    border-radius: 2px; padding: .3rem .5rem; font-size: .76rem; margin-top: .75rem;
-  }
-  .ok { color: var(--gain); }
-  ul.plain { list-style: none; margin: 0; padding: 0; }
-  ul.plain li { padding: .55rem 0; border-bottom: 1px solid var(--rule); }
-  ul.plain li:last-child { border-bottom: 0; }
-  footer { margin-top: 4rem; padding-top: 1.25rem; border-top: 1px solid var(--rule);
-    color: var(--ink-3); font-size: .8rem; }
-  footer p { max-width: 68ch; }
-  code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: .92em; }
-  a { color: var(--gain); }
-
-  .reveal { opacity: 0; transform: translateY(6px); animation: rise .5s ease forwards; }
-  @keyframes rise { to { opacity: 1; transform: none; } }
-  @media (prefers-reduced-motion: reduce) {
-    .reveal { animation: none; opacity: 1; transform: none; }
-    .twist { transition: none; }
-  }
-  @media (max-width: 34rem) {
-    .row { grid-template-columns: 1fr auto; }
-    .bar-row { grid-template-columns: minmax(0,1fr) 6.5rem; }
-  }
+  .pending { color: var(--ink-3); font-style: italic; }
 </style>
 </head>
 <body>
-<main id="app">
-  <header class="reveal">
-    <p class="route">Loading…</p>
-  </header>
+<main>
+
+<header>
+  <h1>Personal Finance Copilot</h1>
+  <p class="standfirst">
+    A deterministic finance engine with the language model kept strictly outside
+    the calculation boundary. The model reads a transaction and proposes a
+    category; every dollar figure downstream is computed in exact decimal by
+    code that never calls it.
+  </p>
+  <p class="standfirst">
+    That boundary is only worth drawing if the model half is measured, so it is.
+    Below is what it scored, what one prompt change cost, and why that change was
+    rejected.
+  </p>
+</header>
+
+<div class="notice">
+  <p><strong>Public demo mode.</strong> Real financial ingestion is disabled on
+  this deployment by design. There is no database attached, the transaction
+  endpoints are not registered, and no API key is present.</p>
+  <p>Every figure on this page is an aggregate. No transaction, amount, merchant,
+  date, or per-row prediction is published here or reachable from here. The
+  evaluations ran locally against real statements; only the counts travelled.</p>
+</div>
+
+<section>
+  <h2>The dataset</h2>
+  <p class="lead">
+    Real bank and credit-card exports from three institutions, imported once and
+    labelled by hand. Nothing synthetic, and nothing generated by a model.
+  </p>
+  <div class="flow" id="flow"><p class="pending">Loading figures…</p></div>
+  <p>
+    Every row was annotated twice, independently, before the labels were
+    reconciled — so the ceiling on any model score is a measured number rather
+    than an assumption. Cohen's kappa is reported next to raw agreement because
+    where one category dominates, 92% raw agreement can mean very little.
+  </p>
+</section>
+
+<section>
+  <h2>How the benchmark was built</h2>
+  <p class="lead">
+    Three decisions do most of the work here, and each of them makes the reported
+    number smaller rather than larger.
+  </p>
+
+  <h3>The split is merchant-disjoint, not random</h3>
+  <p>
+    Rows are assigned by a salted hash of the normalised merchant, so every
+    transaction from one merchant lands on the same side. A shuffled split would
+    put four Kroger rows in development and a fifth in evaluation, and the score
+    would be measuring memorisation of a merchant string. Merchants appearing on
+    both sides: <b id="crossing">—</b>.
+  </p>
+
+  <h3>It is a frozen validation benchmark, not a test set</h3>
+  <p>
+    The v1 results informed the design of v2. Once results shape a decision, the
+    rows that produced them can no longer serve as a held-out test set, and
+    calling them one would claim more than they can support. They are frozen, and
+    they are honest about what they are.
+  </p>
+
+  <h3>Four metrics, because each is misleading alone</h3>
+  <p>
+    Macro F1 weights every category equally, so a model that ignores rare
+    categories cannot hide behind the common ones. Weighted F1 says what a
+    typical row experiences. Coverage and accuracy-when-answered separate
+    declining to guess from guessing wrong. They are reported together on
+    purpose — see the prompt experiment below for what happens when one of them
+    is read on its own.
+  </p>
+</section>
+
+<section>
+  <h2>Results</h2>
+  <p class="lead">
+    Every system scored on the same frozen rows, with the same taxonomy and the
+    same scoring code.
+  </p>
+  <div class="scroll" id="results"><p class="pending">Loading results…</p></div>
+  <p>
+    The rule baseline exists to make the model earn its cost. It answers only
+    when a hand-written pattern matches, which is a fifth of rows, and its macro
+    F1 is what an honest floor looks like. The gap between that floor and the
+    model is the part worth paying for.
+  </p>
+</section>
+
+<section>
+  <h2>Prompt iteration</h2>
+  <p class="lead">
+    One controlled change, measured against the same benchmark, and rejected.
+  </p>
+  <ol class="steps">
+    <li>
+      <b>Hypothesis</b>
+      <p id="hypothesis" class="pending">Loading…</p>
+    </li>
+    <li>
+      <b>Controlled change</b>
+      <p id="change" class="pending">Loading…</p>
+    </li>
+    <li>
+      <b>Result</b>
+      <p id="outcome" class="pending">Loading…</p>
+    </li>
+    <li>
+      <b>Decision — reject v2, keep v1 as the selected prompt</b>
+      <p id="decision" class="pending">Loading…</p>
+    </li>
+  </ol>
+
+  <h3>Why macro F1 rose anyway</h3>
+  <div class="panel">
+    <p id="denominator" class="pending">Loading…</p>
+  </div>
+  <p>
+    Macro F1 is not a misleading metric — it is the one that stops a model hiding
+    a rare class it ignores, which is why it is the headline here. Deciding on
+    macro F1 <em>alone</em> is what misleads. Read beside accuracy, weighted F1,
+    cost, and tail latency, the same run says the opposite of what the headline
+    number says on its own.
+  </p>
+
+  <h3>Per-label movement, v1 to v2</h3>
+  <div class="scroll" id="movement"><p class="pending">Loading…</p></div>
+</section>
+
+<section>
+  <h2>Failure analysis</h2>
+  <p class="lead">
+    What the selected prompt still gets wrong, stated plainly rather than
+    averaged away.
+  </p>
+  <ul class="plain">
+    <li>
+      <b>Travel against transit.</b> The largest single confusion. A rideshare to
+      an airport and a rideshare to work look identical in a description line;
+      the distinction lives in context the model is not given. This is the next
+      prompt version, deliberately deferred until the v2 result was recorded.
+    </li>
+    <li>
+      <b><code>LIVING_OTHER</code> as a catch-all.</b> Predicted 18 times against
+      a true support of 1. v2 was written to fix exactly this and did not move it
+      at all, which is the most useful thing the experiment produced.
+    </li>
+    <li>
+      <b>Refunds read as transfers.</b> A credit posting to a card is a refund or
+      a payment depending on where the money came from, which the description
+      does not say.
+    </li>
+    <li>
+      <b>Five categories have fewer than five rows.</b> The evaluation report
+      says so in a warning block rather than in a footnote, because macro F1
+      weights those equally with the large classes and one correction moves the
+      headline several points.
+    </li>
+  </ul>
+</section>
+
+<section>
+  <h2>Architecture</h2>
+  <p class="lead">
+    The constraint that shapes everything: the model is a proposal, never a
+    calculation.
+  </p>
+  <ul class="plain">
+    <li>
+      <b>The domain layer is standard-library only.</b> No framework, no ORM, no
+      HTTP client can be imported into it. An import-linter contract fails the
+      build if one is, so the rule is enforced rather than documented.
+    </li>
+    <li>
+      <b>Money is <code>Decimal</code> end to end</b>, and crosses the HTTP
+      boundary as a string. A contract test scans every response for a JSON float
+      and fails on any of them.
+    </li>
+    <li>
+      <b>The model sits behind a port.</b> The prompt is a versioned artifact
+      (<code>categorise/v1</code>), the provider is swappable, and the labels,
+      split, and scoring stay fixed across providers so a second vendor can be
+      scored on the identical benchmark.
+    </li>
+    <li>
+      <b>Imports are fingerprinted and versioned.</b> Every transaction carries a
+      reproducible fingerprint and an occurrence number; snapshot and incremental
+      modes have defined, and different, duplicate semantics, and an account
+      cannot silently switch between them.
+    </li>
+    <li>
+      <b>Tests run against real PostgreSQL</b> in CI, not SQLite. Partial unique
+      indexes and JSONB behave differently enough that a passing SQLite suite
+      would be evidence of nothing.
+    </li>
+  </ul>
+</section>
+
+<section>
+  <h2>Next</h2>
+  <div class="panel"><ul class="plain" id="backlog"><li class="pending">Loading…</li></ul></div>
+</section>
+
+<section>
+  <h2>Look at it yourself</h2>
+  <div class="links">
+    <a href="/demo/evaluation/latest"><b>Evaluation JSON</b><span>Every figure on this page, as served</span></a>
+    <a href="/demo/comparison"><b>Comparison demo</b><span>The deterministic engine, fully derived</span></a>
+    <a href="/docs"><b>API reference</b><span>OpenAPI, public routes only</span></a>
+    <a href="https://github.com/jfloww/wdo-delta"><b>Source</b><span>github.com/jfloww/wdo-delta</span></a>
+  </div>
+</section>
+
+<noscript>
+  <div class="notice">
+    <p><strong>This page renders its figures from
+    <a href="/demo/evaluation/latest">/demo/evaluation/latest</a></strong> so
+    that nothing here can drift from the archived runs. With scripting off, open
+    that endpoint directly — it is the same data, unformatted.</p>
+  </div>
+</noscript>
+
+<footer>
+  <p>
+    Aggregate evaluation results generated <span id="generated">—</span> from
+    archived local runs. Deployed without a database, without transaction
+    endpoints, and without an API key.
+  </p>
+</footer>
+
 </main>
 
 <script>
 "use strict";
 
-/* Money arrives as an exact decimal string and is formatted by string
-   surgery alone. JavaScript's only numeric type is an IEEE 754 double, so
-   "4217.33" coerced to one is already an approximation, and the moment a
-   subtotal is computed that way the page disagrees with the engine.
-
-   No displayed amount is ever coerced. Pixel positions are a different
-   matter — a chart is 720 units wide and cannot render a cent of error —
-   so every coercion below is wrapped in geom() and marked GEOMETRY. A
-   contract test enforces that marking, so an unannotated coercion fails
-   the build rather than quietly reaching a figure someone reads. */
-const geom = value => Number(value);   /* GEOMETRY: pixels, never display */
-function fmt(amount, {sign = false, round = true} = {}) {
-  const neg = amount.startsWith("-");
-  let [whole, frac = ""] = (neg ? amount.slice(1) : amount).split(".");
-  if (round) {
-    const next = frac.charCodeAt(2) - 48;
-    frac = frac.slice(0, 2);
-    if (next >= 5) {
-      const bumped = String(BigInt(whole + frac.padEnd(2, "0")) + 1n).padStart(3, "0");
-      whole = bumped.slice(0, -2);
-      frac = bumped.slice(-2);
-    }
-  }
-  frac = (frac + "00").slice(0, 2);
-  whole = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-  const mark = neg ? "−" : (sign ? "+" : "");
-  return mark + "$" + whole + "." + frac;
-}
-const isNeg = a => a.startsWith("-");
-const cls = a => isNeg(a) ? "loss" : "gain";
-
+const $ = id => document.getElementById(id);
 const el = (tag, attrs = {}, ...kids) => {
   const n = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs)) {
@@ -284,266 +483,118 @@ const el = (tag, attrs = {}, ...kids) => {
   }
   return n;
 };
-const NS = "http://www.w3.org/2000/svg";
-const s = (tag, attrs = {}) => {
-  const n = document.createElementNS(NS, tag);
-  for (const [k, v] of Object.entries(attrs)) if (v !== null) n.setAttribute(k, v);
-  return n;
-};
 
-function fieldLabel(text) { return el("p", {class: "field-label"}, text); }
+const say = (id, text) => { const n = $(id); n.textContent = text; n.classList.remove("pending"); };
+const pct = v => (v * 100).toFixed(1) + "%";
+const f4 = v => v === null || v === undefined ? "—" : v.toFixed(4);
 
-function row(nameNode, amount, extra = "") {
-  return el("div", {class: "row"},
-    el("div", {class: "name"}, nameNode),
-    el("div", {class: "num " + cls(amount)}, fmt(amount) + extra));
+/* A prompt version read off a system name, so the table can label the selected
+   one without a second source of truth for which that is. */
+const versionOf = name => (name.match(/categorise\/v\d+/) || [null])[0];
+
+function renderFlow(flow) {
+  const steps = [
+    [flow.imported_transactions, "transactions imported from " + flow.banks + " institutions"],
+    [flow.accounts, "accounts, each with a declared sign convention"],
+    [flow.labelled_rows, "rows hand-labelled, every one annotated twice"],
+    [flow.validation_benchmark_rows, "in the frozen validation benchmark"],
+    [flow.distinct_merchants_in_benchmark, "distinct merchants, none shared with development"],
+    [pct(flow.raw_annotator_agreement), "annotator agreement (kappa " + flow.cohens_kappa.toFixed(3) + ")"],
+  ];
+  $("flow").replaceChildren(...steps.map(([n, l]) =>
+    el("div", {class: "step"}, el("div", {class: "n"}, n), el("div", {class: "l"}, l))));
 }
 
-/* ── Cumulative delta chart ──────────────────────────────────────────
-   Change over time on one series, so a line — no legend, the title names
-   it. A zero rule is drawn because crossing it is the break-even the
-   whole page is about. Values are compared as scaled BigInt cents, never
-   as floats. */
-function chart(series, moveMonth) {
-  const cents = series.map(v => {
-    const neg = v.startsWith("-");
-    const [w, f = ""] = (neg ? v.slice(1) : v).split(".");
-    const n = BigInt(w + (f + "00").slice(0, 2));
-    return neg ? -n : n;
+function renderResults(systems, selected) {
+  const head = ["system", "macro F1", "weighted F1", "accuracy", "coverage", "$ / row", "p95"];
+  const body = systems.map(s => {
+    const version = versionOf(s.name);
+    const state = version === null ? "" : version === selected ? "selected" : "rejected";
+    const tag = state === "selected" ? el("span", {class: "tag sel"}, "selected prompt")
+              : state === "rejected" ? el("span", {class: "tag rej"}, "rejected experiment")
+              : null;
+    return el("tr", {class: state},
+      el("td", {}, s.name, tag),
+      el("td", {}, f4(s.macro_f1)),
+      el("td", {}, f4(s.weighted_f1)),
+      el("td", {}, f4(s.accuracy)),
+      el("td", {}, pct(s.coverage)),
+      el("td", {}, s.cost_per_row_usd === null ? "none" : "$" + s.cost_per_row_usd.toFixed(5)),
+      el("td", {}, s.p95_latency_ms === null ? "—" : s.p95_latency_ms.toLocaleString() + " ms"));
   });
-  const nums = cents.map(geom);   /* GEOMETRY */
-  const lo = Math.min(0, ...nums), hi = Math.max(0, ...nums);
-  const W = 720, H = 220, PL = 8, PR = 8, PT = 14, PB = 26;
-  const x = i => PL + (W - PL - PR) * (i / (series.length - 1));
-  const y = v => PT + (H - PT - PB) * (1 - (v - lo) / ((hi - lo) || 1));
-
-  const svg = s("svg", {viewBox: `0 0 ${W} ${H}`, role: "img",
-    "aria-label": "Cumulative cash difference by month"});
-
-  const zero = y(0);
-  svg.append(s("line", {x1: PL, x2: W - PR, y1: zero, y2: zero,
-    stroke: "var(--rule-strong)", "stroke-width": 1, "stroke-dasharray": "3 3"}));
-
-  const area = s("path", {
-    d: `M${x(0)},${zero} ` + nums.map((v,i)=>`L${x(i)},${y(v)}`).join(" ") +
-       ` L${x(nums.length-1)},${zero} Z`,
-    fill: "var(--gain-wash)"});
-  svg.append(area);
-
-  svg.append(s("path", {
-    d: nums.map((v,i)=>`${i?"L":"M"}${x(i)},${y(v)}`).join(" "),
-    fill: "none", stroke: "var(--gain)", "stroke-width": 2,
-    "stroke-linejoin": "round", "stroke-linecap": "round"}));
-
-  nums.forEach((v, i) => {
-    const marker = i === moveMonth - 1;
-    svg.append(s("circle", {cx: x(i), cy: y(v), r: marker ? 5 : 3.5,
-      fill: marker ? "var(--loss)" : "var(--gain)",
-      stroke: "var(--panel)", "stroke-width": 2}));
-  });
-
-  [1, Math.ceil(series.length / 2), series.length].forEach(m => {
-    const t = s("text", {x: x(m - 1), y: H - 8, "text-anchor": "middle",
-      fill: "var(--ink-3)", "font-size": 11,
-      "font-family": "ui-monospace, Menlo, monospace"});
-    t.textContent = "M" + m;
-    svg.append(t);
-  });
-
-  const wrap = el("div", {class: "chart-wrap"});
-  const tip = el("div", {class: "tip"});
-  wrap.append(svg, tip);
-
-  const hit = s("rect", {x: 0, y: 0, width: W, height: H, fill: "transparent"});
-  svg.append(hit);
-  svg.addEventListener("pointermove", ev => {
-    const box = svg.getBoundingClientRect();
-    const i = Math.max(0, Math.min(series.length - 1,
-      Math.round(((ev.clientX - box.left) / box.width * W - PL) / ((W - PL - PR) / (series.length - 1)))));
-    tip.textContent = `M${i + 1}  ${fmt(series[i], {sign: true})}`;
-    tip.style.left = (x(i) / W * box.width) + "px";
-    tip.style.top = (y(nums[i]) / H * box.height - 8) + "px";
-    tip.classList.add("on");
-  });
-  svg.addEventListener("pointerleave", () => tip.classList.remove("on"));
-  return wrap;
+  $("results").replaceChildren(el("table", {},
+    el("thead", {}, el("tr", {}, head.map(h => el("th", {}, h)))),
+    el("tbody", {}, body)));
 }
 
-/* ── Diverging bars for the component breakdown ───────────────────── */
-function bars(components) {
-  const shown = components.slice(0, 9);
-  const mags = shown.map(c => Math.abs(geom(c.delta)));   /* GEOMETRY: bar widths */
-  const max = Math.max(...mags, 1);
-  const box = el("div", {class: "bars"});
-  shown.forEach((c, i) => {
-    const pct = (mags[i] / max) * 100;
-    const fill = el("div", {class: "bar-fill",
-      style: `${isNeg(c.delta) ? "right:50%" : "left:50%"};width:${pct / 2}%;` +
-             `background:${isNeg(c.delta) ? "var(--loss-wash)" : "var(--gain-wash)"};` +
-             `border-${isNeg(c.delta) ? "left" : "right"}:2px solid ` +
-             `${isNeg(c.delta) ? "var(--loss)" : "var(--gain)"}`});
-    box.append(el("div", {class: "bar-row"},
-      el("div", {class: "bar-track"}, fill,
-        el("div", {class: "bar-label"}, el("span", {}, c.label))),
-      el("div", {class: "num " + cls(c.delta)}, fmt(c.delta, {sign: true}))));
-  });
-  return box;
+function renderMovement(rows) {
+  const moved = rows.filter(r => r.delta !== null && r.delta !== 0);
+  const gone = rows.filter(r => r.delta === null);
+  const cell = r => {
+    const klass = r.delta > 0 ? "up" : "down";
+    return el("td", {class: klass}, (r.delta > 0 ? "+" : "") + r.delta.toFixed(4));
+  };
+  const table = el("table", {},
+    el("thead", {}, el("tr", {},
+      ["label", "rows", "v1 F1", "v2 F1", "change"].map(h => el("th", {}, h)))),
+    el("tbody", {}, [
+      ...moved.map(r => el("tr", {},
+        el("td", {class: "mono"}, r.label),
+        el("td", {}, r.support),
+        el("td", {}, f4(r.v1)),
+        el("td", {}, f4(r.v2)),
+        cell(r))),
+      ...gone.map(r => el("tr", {},
+        el("td", {class: "mono"}, r.label),
+        el("td", {}, r.support),
+        el("td", {}, f4(r.v1)),
+        el("td", {}, f4(r.v2)),
+        el("td", {class: "flat"}, r.v2 === null ? "no longer predicted" : "newly predicted"))),
+    ]));
+  const note = el("p", {},
+    (rows.length - moved.length - gone.length) + " further labels scored identically under both prompts.");
+  $("movement").replaceChildren(table, note);
 }
 
-/* ── Derivation tree — the signature ─────────────────────────────────
-   Amounts stay in the same right-hand column at every depth, so the
-   decomposition reads down one spine. */
-function node(n, depth = 0) {
-  const head = el("div", {class: "row"},
-    el("div", {class: "name"},
-      el("b", {}, (n.children.length ? el("span", {class: "twist"}, "▶") : ""), " ", n.label),
-      el("span", {class: "badge b-" + n.evidence}, n.evidence.replace("_", " ")),
-      el("span", {class: "formula"}, n.formula)),
-    el("div", {class: "num " + cls(n.amount)}, fmt(n.amount)));
+function renderExperiment(x) {
+  say("hypothesis", x.hypothesis);
+  say("change", x.controlled_change);
 
-  if (!n.children.length) return el("div", {class: "node"}, head);
+  const o = x.outcome;
+  say("outcome",
+    o.target_unmoved + " " +
+    o.categories_regressed.length + " categories regressed (" + o.categories_regressed.join(", ") + ") " +
+    "against " + o.categories_improved.length + " improvements (" + o.categories_improved.join(", ") + "). " +
+    "v1 is also " + o.v1_is_cheaper_by_pct + "% cheaper per row and has " +
+    o.v1_p95_latency_lower_by_ms.toLocaleString() + " ms lower p95 latency.");
 
-  const d = el("details", depth < 1 ? {open: "open"} : {});
-  d.append(el("summary", {}, head));
-  const kids = el("div", {class: "kids"});
-  n.children.forEach(c => kids.append(node(c, depth + 1)));
-  d.append(kids);
-  return el("div", {class: "node"}, d);
+  say("decision", x.reasoning + " " + x.caveat);
+  say("denominator", x.why_macro_f1_rose_anyway);
 }
 
-function metric(k, v, sub, tone) {
-  return el("div", {class: "metric"},
-    el("span", {class: "k"}, k),
-    el("span", {class: "v " + (tone || "")}, v),
-    sub ? el("span", {class: "sub"}, sub) : null);
-}
-
-function render(d) {
-  const app = document.getElementById("app");
-  app.replaceChildren();
-
-  const be = d.break_even;
-  const eq = d.equivalent_salary;
-  const moveMonth = 7;
-
-  // The headline states what the data says, never a fixed conclusion. A page
-  // that reads "the move pays" regardless of the number is worse than useless.
-  const ahead = !isNeg(d.cash_delta);
-  const headline = ahead
-    ? "The move pays. Here is every dollar of why."
-    : "The move costs you. Here is every dollar of where.";
-
-  app.append(el("header", {class: "reveal"},
-    el("p", {class: "route"}, el("b", {}, d.current_label), "  →  ", el("b", {}, d.candidate_label)),
-    el("h1", {}, headline),
-    el("p", {class: "standfirst"},
-      `Over ${d.horizon_months} months, against your current job. Cash, wealth and time are ` +
-      `kept apart — an offer that pays more while taking back weeks of your year in ` +
-      `unpaid commuting is not simply better. Open any figure to see how it was built.`)));
-
-  // Verdict
-  const time = d.time_delta_hours;
-  app.append(el("section", {class: "reveal", style: "animation-delay:.05s"},
-    fieldLabel("Verdict"),
-    el("div", {class: "verdict"},
-      metric("Disposable cash", fmt(d.cash_delta, {sign: true}), `over ${d.horizon_months} months`, cls(d.cash_delta)),
-      metric("Wealth", fmt(d.wealth_delta, {sign: true}), "vested equity and employer money", cls(d.wealth_delta)),
-      metric("Commuting", (isNeg(time) ? "−" : "+") + time.replace("-", "") + " h",
-        "per year, unpaid", isNeg(time) ? "gain" : "loss"),
-      metric("Break-even",
-        be.stable_break_even_month === null ? "Never" : "Month " + be.stable_break_even_month,
-        be.first_crossing_month === be.stable_break_even_month
-          ? "and it stays ahead" : "first crossed month " + be.first_crossing_month))));
-
-  // Chart
-  app.append(el("section", {class: "reveal", style: "animation-delay:.1s"},
-    fieldLabel("Cumulative cash difference"),
-    chart(d.cumulative_cash_delta, moveMonth),
-    el("p", {class: "note"},
-      `The drop at month ${moveMonth} is the move itself — deposit, broker fee, movers and ` +
-      `furnishing all land together. The curve recovers by month ${moveMonth + 1}.`)));
-
-  // Components
-  app.append(el("section", {class: "reveal", style: "animation-delay:.15s"},
-    fieldLabel("What moves the number"),
-    bars(d.component_deltas),
-    el("p", {class: "note"}, "Annualised. Positive means the offer wins that line.")));
-
-  // Equivalent salary
-  const eqBody = el("div", {class: "panel"});
-  if (eq) {
-    eqBody.append(
-      el("div", {class: "row"},
-        el("div", {class: "name"}, el("b", {}, "Salary that would match your current job"),
-          el("span", {class: "formula"}, eq.target_metric + " · " + eq.tax_model +
-            " · " + eq.iterations + " iterations")),
-        el("div", {class: "num"}, fmt(eq.equivalent_salary))));
-    if (eq.is_far_from_calibration) {
-      eqBody.append(el("p", {class: "flag"},
-        `Extrapolated ${eq.calibration_distance_percent}% from the one pay figure this ` +
-        `model was calibrated on. Treat it as a direction, not a quote.`));
-    }
-  } else {
-    eqBody.append(el("p", {class: "note"}, d.equivalent_salary_error || "No solution in range."));
+function renderError(message) {
+  for (const id of ["hypothesis", "change", "outcome", "decision", "denominator"]) {
+    say(id, message);
   }
-  app.append(el("section", {class: "reveal", style: "animation-delay:.2s"},
-    fieldLabel("Equivalent salary"), eqBody));
-
-  // Negotiation
-  const neg = d.negotiation;
-  const negBody = el("div", {class: "panel"});
-  if (!neg) {
-    negBody.append(el("p", {class: "note"}, d.negotiation_error || "Not available."));
-  } else if (!neg.needs_negotiation) {
-    negBody.append(
-      el("p", {}, el("b", {class: "ok"}, "Nothing to negotiate."), " ",
-        "The offer already clears your current job on first-year cash."),
-      el("p", {class: "note"}, "Ask anyway, but the numbers do not require it."));
-  } else {
-    negBody.append(el("div", {class: "row"},
-      el("div", {class: "name"}, el("b", {}, "Short by")),
-      el("div", {class: "num loss"}, fmt(neg.gap))));
-    const list = el("ul", {class: "plain"});
-    neg.options.forEach(o => list.append(el("li", {},
-      el("div", {class: "row"},
-        el("div", {class: "name"},
-          el("b", {}, o.lever.toLowerCase().replace(/_/g, " ")),
-          el("span", {class: "formula"}, o.note)),
-        el("div", {class: "num"},
-          o.required_amount ? fmt(o.required_amount) :
-          o.required_days ? o.required_days + " d" : "—")))));
-    negBody.append(list);
+  for (const id of ["flow", "results", "movement"]) {
+    $(id).replaceChildren(el("p", {}, message));
   }
-  app.append(el("section", {class: "reveal", style: "animation-delay:.25s"},
-    fieldLabel("Closing the gap"), negBody));
-
-  // Derivations
-  [["Where the offer's money goes", d.candidate_derivation],
-   ["Where your money goes today", d.current_derivation]].forEach(([title, tree], i) => {
-    app.append(el("section", {class: "reveal", style: `animation-delay:${.3 + i * .05}s`},
-      fieldLabel(title),
-      el("div", {class: "tree"}, node(tree))));
-  });
-
-  app.append(el("footer", {class: "reveal", style: "animation-delay:.4s"},
-    el("p", {},
-      d.reconciled
-        ? "Every projected month balances on both sides — the engine refuses to return a result that does not. "
-        : "",
-      "Amounts cross the API as exact decimal strings and are formatted here without ever being parsed as numbers."),
-    el("p", {}, "Figures are placeholders, not real data. Portfolio project. Not tax, legal or financial advice.")));
 }
 
-fetch("/v1/demo/comparison")
+fetch("/demo/evaluation/latest")
   .then(r => r.ok ? r.json() : Promise.reject(new Error("HTTP " + r.status)))
-  .then(render)
-  .catch(err => {
-    document.getElementById("app").replaceChildren(
-      el("header", {},
-        el("h1", {}, "The comparison did not load."),
-        el("p", {class: "standfirst"}, "Reload the page. If it keeps failing, the service is likely waking from sleep — give it thirty seconds."),
-        el("p", {class: "formula"}, String(err))));
-  });
+  .then(d => {
+    renderFlow(d.dataset_flow);
+    $("crossing").textContent = d.method.merchants_on_both_sides;
+    renderResults(d.systems, d.prompt_experiment.selected_prompt);
+    renderExperiment(d.prompt_experiment);
+    renderMovement(d.prompt_experiment.per_label_movement);
+    $("backlog").replaceChildren(...d.backlog.map(item => el("li", {}, item)));
+    $("generated").textContent = d.generated_at.slice(0, 10);
+  })
+  .catch(err => renderError(
+    "Could not load /demo/evaluation/latest (" + err.message + "). " +
+    "The figures live in that endpoint; open it directly."));
 </script>
 </body>
 </html>
