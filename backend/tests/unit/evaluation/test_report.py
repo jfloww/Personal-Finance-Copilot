@@ -345,3 +345,69 @@ def test_the_rendered_report_names_the_dataset_and_checksum() -> None:
 def test_the_rendered_report_says_when_a_system_has_no_cost() -> None:
     rendered = evaluate(HOLDOUT, [fit_rules(HOLDOUT)]).render()
     assert "makes no external calls" in rendered
+
+
+# --- Annotator agreement as a difficulty stratum ---------------------------
+
+
+def test_rows_are_stratified_by_whether_the_annotators_agreed() -> None:
+    """A difficulty signal, not an ambiguity claim. It answers whether the rows
+    people found hard are the same rows the model finds hard - which bounds how
+    much of a failure is reachable by prompting at all."""
+    result = evaluate(HOLDOUT, [_Always(DINING)]).systems[0]
+
+    assert result.annotators_agreed is not None
+    assert result.annotators_disagreed is not None
+    # h1 and h2 were agreed on; h3 was not. h4 has no second annotator.
+    assert result.annotators_agreed.total == 2
+    assert result.annotators_disagreed.total == 1
+
+
+def test_a_row_with_no_second_annotator_is_in_neither_agreement_stratum() -> None:
+    """Absent is not the same as disagreed. Counting it as either would invent a
+    fact about an annotation that never happened."""
+    result = evaluate(HOLDOUT, [_Always(DINING)]).systems[0]
+
+    assert result.annotators_agreed is not None
+    assert result.annotators_disagreed is not None
+    counted = result.annotators_agreed.total + result.annotators_disagreed.total
+    assert counted == len(HOLDOUT) - 1
+
+
+def test_the_agreement_strata_do_not_claim_the_rows_are_ambiguous() -> None:
+    """The two are reported separately on purpose: this project refuses to read
+    disagreement as ambiguity, and the report must not blur them."""
+    rendered = (
+        evaluate(HOLDOUT, [_Always(DINING)]).systems[0].render(input_price=None, output_price=None)
+    )
+    assert "difficulty, not ambiguity" in rendered
+
+
+# --- Predictions are retained ----------------------------------------------
+
+
+def test_predictions_are_kept_so_a_run_can_be_re_scored_without_re_running() -> None:
+    result = evaluate(HOLDOUT, [_Always(DINING)]).systems[0]
+
+    assert len(result.predictions) == len(HOLDOUT)
+    assert {p.label for p in result.predictions} == {DINING}
+
+
+# --- The scoring policy is stated ------------------------------------------
+
+
+def test_the_report_says_what_correct_meant() -> None:
+    """Accuracy here is acceptable-label accuracy. With ambiguous rows present
+    the two differ, and a reader must not have to guess which one they see."""
+    rendered = evaluate(HOLDOUT, [_Always(DINING)]).render()
+    assert "acceptable-label accuracy" in rendered
+    assert "1 ambiguous rows count any label" in rendered
+
+
+def test_the_report_says_when_the_two_accuracies_coincide() -> None:
+    unambiguous = LabelledDataset(
+        dataset_version="no-ambiguity",
+        records=(_record("u1", "BLUE BOTTLE", DINING),),
+    )
+    rendered = evaluate(unambiguous, [_Always(DINING)]).render()
+    assert "equals exact-match" in rendered
