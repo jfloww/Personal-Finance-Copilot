@@ -1,0 +1,137 @@
+data\eval\transactions.csv: 400 rows
+
+WARNINGS (1)
+  - 5 classes have fewer than 5 rows: COMMUTE_PARKING_WORK (1), HEALTH_PREMIUM (1), HOUSING_PARKING_RESIDENTIAL (4), HOUSING_RENT_OR_MORTGAGE (3), LIVING_EDUCATION (2). Macro F1 weights these equally with the large classes, so one correction moves the headline number several points.
+
+NOTES (4)
+  - 400 rows independently double-annotated
+  - raw annotator agreement 369/400 (92%)
+  - 22 distinct labels used
+  - 183 distinct normalised merchants
+
+usable, with warnings above
+
+split by merchant: 123 development / 60 holdout, 265 / 135 rows
+merchants on both sides: 0
+
+scoring the DEVELOPMENT split (265 rows), not the benchmark
+use this to find failures; the benchmark stays untouched by that search
+
+model            claude-haiku-4-5
+prompt           categorise/v1
+systems          rules+llm (1 making model calls)
+rows to score    265
+estimated cost   $0.5168 upper bound, at 1/5 per Mtok
+
+EVALUATION REPORT
+  dataset transactions+dev (schema 1.0)
+  checksum 1408cdb8ae7fc8dd...
+  265 rows, 123 merchants, 0 ambiguous
+  annotators: 245/265 agreed (0.9245), Cohen's kappa 0.9154
+  scoring: acceptable-label accuracy, which equals exact-match here - no row carries an authored acceptable set
+
+--- rules
+scored 265 rows
+  macro F1              1.0000
+  weighted F1           1.0000
+  accuracy (all rows)   1.0000
+  coverage              1.0000
+  accuracy when answered 1.0000
+  abstentions           0
+
+  label                                  P       R      F1     n
+  COMMUTE_FUEL                      1.0000  1.0000  1.0000    10
+  COMMUTE_PARKING_WORK              1.0000  1.0000  1.0000     1
+  COMMUTE_TRANSIT_FARE              1.0000  1.0000  1.0000     9
+  COMMUTE_VEHICLE_WEAR              1.0000  1.0000  1.0000     6
+  HEALTH_PREMIUM                    1.0000  1.0000  1.0000     1
+  HOUSING_PARKING_RESIDENTIAL       1.0000  1.0000  1.0000     3
+  HOUSING_RENT_OR_MORTGAGE          1.0000  1.0000  1.0000     1
+  HOUSING_UTILITIES                 1.0000  1.0000  1.0000     5
+  LIVING_CARD_FEE                   1.0000  1.0000  1.0000     2
+  LIVING_CLOTHING                   1.0000  1.0000  1.0000     7
+  LIVING_DINING                     1.0000  1.0000  1.0000    54
+  LIVING_EDUCATION                  1.0000  1.0000  1.0000     1
+  LIVING_ENTERTAINMENT              1.0000  1.0000  1.0000    15
+  LIVING_GROCERY                    1.0000  1.0000  1.0000    42
+  LIVING_GYM                        1.0000  1.0000  1.0000     9
+  LIVING_OTHER                      1.0000  1.0000  1.0000     4
+  LIVING_SUBSCRIPTIONS              1.0000  1.0000  1.0000    28
+  LIVING_TRAVEL                     1.0000  1.0000  1.0000    22
+  REFUND                            1.0000  1.0000  1.0000    19
+  TRANSFER                          1.0000  1.0000  1.0000    26
+
+  strata
+    unambiguous ( 265 rows)  macro F1 1.0000  weighted 1.0000
+    ambiguous   (   0 rows)  none authored in this holdout - ambiguity is written down during adjudication, never inferred
+
+  by annotator agreement (difficulty, not ambiguity)
+    agreed    ( 245 rows)  accuracy 1.0000  macro F1 1.0000
+    disagreed (  20 rows)  accuracy 1.0000  macro F1 1.0000
+
+  cost: none - this system makes no external calls
+
+--- llm:claude-haiku-4-5
+scored 265 rows
+  macro F1              0.4263
+  weighted F1           0.6243
+  accuracy (all rows)   0.6302
+  coverage              1.0000
+  accuracy when answered 0.6302
+  abstentions           0
+
+  label                                  P       R      F1     n
+  COMMUTE_FUEL                      0.9091  1.0000  0.9524    10
+  COMMUTE_PARKING_WORK              0.1429  1.0000  0.2501     1
+  COMMUTE_TRANSIT_FARE              0.6429  1.0000  0.7826     9
+  COMMUTE_VEHICLE_WEAR              1.0000  0.3333  0.5000     6
+  HEALTH_OUT_OF_POCKET              0.0000       0       0     0
+  HEALTH_PREMIUM                         0  0.0000       0     1
+  HOUSING_INTERNET                  0.0000       0       0     0
+  HOUSING_PARKING_RESIDENTIAL            0  0.0000       0     3
+  HOUSING_RENT_OR_MORTGAGE          1.0000  1.0000  1.0000     1
+  HOUSING_UTILITIES                 1.0000  1.0000  1.0000     5
+  LIVING_CARD_FEE                   0.0000  0.0000       0     2
+  LIVING_CLOTHING                   1.0000  1.0000  1.0000     7
+  LIVING_DINING                     0.7925  0.7778  0.7851    54
+  LIVING_EDUCATION                  0.2500  1.0000  0.4000     1
+  LIVING_ENTERTAINMENT              0.4000  0.1333  0.2000    15
+  LIVING_GROCERY                    0.9048  0.9048  0.9048    42
+  LIVING_GYM                        0.8182  1.0000  0.9000     9
+  LIVING_OTHER                      0.0000  0.0000       0     4
+  LIVING_PHONE                      0.0000       0       0     0
+  LIVING_SUBSCRIPTIONS              0.7778  1.0000  0.8750    28
+  LIVING_TRAVEL                     1.0000  0.2273  0.3704    22
+  LIVING_VEHICLE_FIXED              0.0000       0       0     0
+  REFUND                                 0  0.0000       0    19
+  TRANSFER                          0.3684  0.2692  0.3111    26
+
+  most frequent confusions
+    TRANSFER -> LIVING_CARD_FEE: 13
+    REFUND -> LIVING_DINING: 9
+    REFUND -> TRANSFER: 9
+    LIVING_ENTERTAINMENT -> LIVING_OTHER: 5
+    LIVING_TRAVEL -> COMMUTE_PARKING_WORK: 5
+
+  strata
+    unambiguous ( 265 rows)  macro F1 0.4263  weighted 0.6243
+    ambiguous   (   0 rows)  none authored in this holdout - ambiguity is written down during adjudication, never inferred
+
+  by annotator agreement (difficulty, not ambiguity)
+    agreed    ( 245 rows)  accuracy 0.6694  macro F1 0.4671
+    disagreed (  20 rows)  accuracy 0.1500  macro F1 0.1462
+
+  tokens: 345882 in, 25053 out, 370935 total over 265 calls
+  cost: total 0.4711, per row 0.001778 (at 1/5 per Mtok)
+  latency: mean 2138ms  p50 1750ms  p95 4906ms
+
+SUMMARY
+  system                              macro F1  weighted  coverage
+  rules                                 1.0000    1.0000    1.0000
+  llm:claude-haiku-4-5                  0.4263    0.6243    1.0000
+
+predictions: 530 rows -> data\eval\predictions\development-categorise-v1.jsonl (local only, never published)
+
+model calls      265
+failures         0
+rejected outputs 0  (outside the taxonomy, discarded)

@@ -74,6 +74,20 @@ class SystemResult:
     ambiguous: ClassificationReport | None
     usage: Usage | None
 
+    #: Rows the two annotators agreed on, and rows they did not. A difficulty
+    #: stratum, not an ambiguity claim: disagreement usually means one annotator
+    #: was wrong, and this project refuses to read it as legitimate ambiguity.
+    #: What it does measure is whether the rows humans found hard are the same
+    #: rows the model finds hard. `None` when nothing was double-annotated.
+    annotators_agreed: ClassificationReport | None = None
+    annotators_disagreed: ClassificationReport | None = None
+
+    #: Every prediction, in dataset order. Kept so a scoring policy can change
+    #: without paying for inference again, and so failure analysis has something
+    #: to read. Never published: these are per-row and stay on the machine that
+    #: ran them.
+    predictions: tuple[Prediction, ...] = ()
+
     def render(self, *, input_price: Decimal | None, output_price: Decimal | None) -> str:
         lines = [f"--- {self.name}", self.overall.render()]
 
@@ -85,13 +99,28 @@ class SystemResult:
             f"weighted {self.unambiguous.weighted_f1}"
         )
         if self.ambiguous is None:
-            lines.append("    ambiguous   (   0 rows)  none in this holdout")
+            lines.append(
+                "    ambiguous   (   0 rows)  none authored in this holdout - "
+                "ambiguity is written down during adjudication, never inferred"
+            )
         else:
             lines.append(
                 f"    ambiguous   ({self.ambiguous.total:>4} rows)  "
                 f"macro F1 {self.ambiguous.macro_f1}  "
                 f"weighted {self.ambiguous.weighted_f1}"
             )
+
+        if self.annotators_agreed is not None and self.annotators_disagreed is not None:
+            lines.append("")
+            lines.append("  by annotator agreement (difficulty, not ambiguity)")
+            for label, report in (
+                ("agreed   ", self.annotators_agreed),
+                ("disagreed", self.annotators_disagreed),
+            ):
+                lines.append(
+                    f"    {label} ({report.total:>4} rows)  "
+                    f"accuracy {report.accuracy}  macro F1 {report.macro_f1}"
+                )
 
         lines.append("")
         if self.usage is None:
@@ -115,7 +144,10 @@ class SystemResult:
                 else f"at {input_price}/{output_price} per Mtok"
             )
             lines.append(f"  cost: total {priced}, per row {per_row} ({rates})")
-            lines.append(f"  latency: p50 {usage.p50_latency_ms}ms  p95 {usage.p95_latency_ms}ms")
+            lines.append(
+                f"  latency: mean {usage.mean_latency_ms}ms  "
+                f"p50 {usage.p50_latency_ms}ms  p95 {usage.p95_latency_ms}ms"
+            )
             if usage.failures or usage.rejected_outputs:
                 lines.append(
                     f"  provider failures {usage.failures}, "
@@ -142,6 +174,24 @@ class EvaluationReport:
     def best_by_macro_f1(self) -> SystemResult:
         return max(self.systems, key=lambda s: s.overall.macro_f1)
 
+    def _scoring_policy(self) -> str:
+        """What "correct" meant in this run, said once rather than assumed.
+
+        Accuracy here is acceptable-label accuracy: an ambiguous row counts a
+        prediction correct if it is anywhere in that row's authored set. With no
+        ambiguous rows the two measures coincide, and saying so is better than
+        letting a reader guess which one they are looking at.
+        """
+        if self.ambiguous_rows:
+            return (
+                f"  scoring: acceptable-label accuracy - {self.ambiguous_rows} "
+                f"ambiguous rows count any label in their authored set"
+            )
+        return (
+            "  scoring: acceptable-label accuracy, which equals exact-match "
+            "here - no row carries an authored acceptable set"
+        )
+
     def render(self) -> str:
         lines = [
             "EVALUATION REPORT",
@@ -149,6 +199,7 @@ class EvaluationReport:
             f"  checksum {self.checksum[:16]}...",
             f"  {self.rows} rows, {self.merchants} merchants, {self.ambiguous_rows} ambiguous",
             self.agreement.render(),
+            self._scoring_policy(),
             "",
         ]
         for result in self.systems:
@@ -235,6 +286,17 @@ def _run(system: EvaluatableSystem, records: tuple[LabelledTransaction, ...]) ->
             labels,
             [i for i, record in enumerate(records) if record.ambiguous],
         ),
+        annotators_agreed=_score_optional(
+            records,
+            labels,
+            [i for i, record in enumerate(records) if record.annotators_agree is True],
+        ),
+        annotators_disagreed=_score_optional(
+            records,
+            labels,
+            [i for i, record in enumerate(records) if record.annotators_agree is False],
+        ),
+        predictions=tuple(predictions),
         usage=system.usage() if isinstance(system, ReportsUsage) else None,
     )
 

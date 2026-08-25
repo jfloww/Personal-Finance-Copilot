@@ -33,8 +33,9 @@ from offerdelta.domain.common.errors import ValidationError
 from offerdelta.evaluation.csv_loader import load_labelled_csv
 from offerdelta.evaluation.dataset import LabelledDataset
 from offerdelta.evaluation.llm_categoriser import HybridCategoriser, LLMCategoriser
+from offerdelta.evaluation.predictions import PredictedSystem, write_predictions
 from offerdelta.evaluation.providers import LLMProvider, LLMResponse, ScriptedProvider
-from offerdelta.evaluation.report import evaluate
+from offerdelta.evaluation.report import EvaluatableSystem, evaluate
 from offerdelta.evaluation.rule_baseline import fit_rules
 from offerdelta.evaluation.splitting import merchant_disjoint_split
 from offerdelta.evaluation.validation import validate_labelled_csv
@@ -43,6 +44,16 @@ from offerdelta.infrastructure.llm.prompts import PROMPT_VERSION, SYSTEM_PROMPTS
 
 DEFAULT_PATH = Path("data/eval/transactions.csv")
 HOLDOUT_FRACTION = 0.3
+
+#: Row-level predictions land here. Under `data/`, which the repository
+#: denies by default: a row is a real transaction's id beside what a model
+#: thought of it, and that is exactly what never gets published.
+PREDICTIONS_DIR = Path("data/eval/predictions")
+
+#: Which split to score. The holdout is the benchmark; the development split
+#: is where a prompt change is allowed to be chosen, because choosing one on
+#: the benchmark is how a benchmark stops measuring anything.
+SPLITS = ("holdout", "development")
 
 #: Published per-million token prices, per model. Keyed by the exact model id
 #: the provider reports, so a report can never price one model at another's
@@ -102,7 +113,22 @@ def _stand_in() -> ScriptedProvider:
     )
 
 
-def _estimate_cost(rows: int, model: str) -> Decimal:
+def _calling_systems(choice: str) -> int:
+    """How many of the selected systems make their own model calls.
+
+    The hybrid keeps its own categoriser, so scoring it alongside the LLM means
+    two sets of calls, not one. An estimate that ignores which systems were
+    asked for is off by a factor of two in whichever direction happens to be
+    wrong that day.
+    """
+    if choice == "rules":
+        return 0
+    if choice in ("llm", "rules+llm"):
+        return 1
+    return 2
+
+
+def _estimate_cost(rows: int, model: str, calling_systems: int = 2) -> Decimal:
     """What a live run would cost, before it is made.
 
     The hybrid calls the model only where the rules abstain, so the true cost is
@@ -114,12 +140,12 @@ def _estimate_cost(rows: int, model: str) -> Decimal:
         input_price, output_price = _UNKNOWN_MODEL_PRICES
     input_cost = Decimal(rows * ESTIMATED_INPUT_TOKENS) / Decimal(1_000_000) * input_price
     output_cost = Decimal(rows * ESTIMATED_OUTPUT_TOKENS) / Decimal(1_000_000) * output_price
-    # Twice: the LLM system and the hybrid are scored separately, and each makes
-    # its own calls.
-    return (input_cost + output_cost) * 2
+    return (input_cost + output_cost) * calling_systems
 
 
-def _confirm_live_run(rows: int, model: str, prompt: str, *, assume_yes: bool) -> bool:
+def _confirm_live_run(
+    rows: int, model: str, prompt: str, systems: str, *, assume_yes: bool
+) -> bool:
     """Show what a live run will cost, and get a yes before spending it.
 
     The estimate is printed whether or not it is going to be asked about, so a
@@ -132,10 +158,12 @@ def _confirm_live_run(rows: int, model: str, prompt: str, *, assume_yes: bool) -
         if rate_in is not None
         else "priced at the dearest known model; this one is not in the table"
     )
+    calling = _calling_systems(systems)
     print(f"model            {model}")
     print(f"prompt           {prompt}")
+    print(f"systems          {systems} ({calling} making model calls)")
     print(f"rows to score    {rows}")
-    print(f"estimated cost   ${_estimate_cost(rows, model):.4f} upper bound, {basis}")
+    print(f"estimated cost   ${_estimate_cost(rows, model, calling):.4f} upper bound, {basis}")
 
     if not assume_yes and input("\nsend these requests? [y/N] ").strip().lower() != "y":
         print("nothing was sent")
@@ -161,6 +189,32 @@ def _resolve_provider(live: bool, prompt_version: str) -> tuple[LLMProvider, boo
         raise SystemExit(2)
 
     return provider, True
+
+
+def _systems_for_run(
+    choice: str,
+    development: LabelledDataset,
+    provider: LLMProvider,
+    llm: LLMCategoriser,
+) -> list[EvaluatableSystem]:
+    """The systems to score, and nothing more.
+
+    The hybrid makes its own model calls, so scoring it doubles the bill. That
+    is worth paying for the headline comparison and wasteful when the question
+    is only how the model does on its own, which is what `rules+llm` is for.
+
+    Rules are always fitted on the development split, whichever split is being
+    scored. Fitting them on the rows they are about to be graded on would make
+    the baseline a lookup table.
+    """
+    rules = fit_rules(development)
+    if choice == "rules":
+        return [rules]
+    if choice == "llm":
+        return [llm]
+    if choice == "rules+llm":
+        return [rules, llm]
+    return [rules, llm, HybridCategoriser(fit_rules(development), LLMCategoriser(provider))]
 
 
 def _holdout_for_run(holdout: LabelledDataset, limit: int | None) -> LabelledDataset:
@@ -196,6 +250,33 @@ def _build_parser() -> argparse.ArgumentParser:
         "--yes",
         action="store_true",
         help="skip the cost confirmation prompt on a live run",
+    )
+    parser.add_argument(
+        "--split",
+        default="holdout",
+        choices=SPLITS,
+        help=(
+            "which split to score (default: holdout, the benchmark). Use "
+            "development to look for failures worth fixing without spending the "
+            "benchmark's independence on it."
+        ),
+    )
+    parser.add_argument(
+        "--systems",
+        default="all",
+        choices=("all", "rules", "llm", "rules+llm"),
+        help=(
+            "which systems to score (default: all). rules+llm skips the hybrid, "
+            "which halves the model calls when only the head-to-head is wanted."
+        ),
+    )
+    parser.add_argument(
+        "--save-predictions",
+        action="store_true",
+        help=(
+            "record every row-level prediction under data/eval/predictions/ so "
+            "failure analysis and re-scoring do not need another live run"
+        ),
     )
     parser.add_argument(
         "--prompt",
@@ -241,21 +322,26 @@ def main(argv: list[str] | None = None) -> int:
     overlap = split.development.merchants & split.holdout.merchants
     print(f"merchants on both sides: {len(overlap)}\n")
 
-    holdout = _holdout_for_run(split.holdout, args.limit)
-    if len(holdout) != len(split.holdout):
-        print(f"limited to the first {len(holdout)} holdout rows of {len(split.holdout)}")
+    scored = split.holdout if args.split == "holdout" else split.development
+    if args.split != "holdout":
+        print(f"scoring the DEVELOPMENT split ({len(scored)} rows), not the benchmark")
+        print("use this to find failures; the benchmark stays untouched by that search")
+        print()
+
+    holdout = _holdout_for_run(scored, args.limit)
+    if len(holdout) != len(scored):
+        print(f"limited to the first {len(holdout)} rows of {len(scored)}")
         print("a partial holdout is a smoke test, not a benchmark result\n")
 
     provider, is_live = _resolve_provider(args.live, args.prompt)
 
     if is_live and not _confirm_live_run(
-        len(holdout), provider.model, args.prompt, assume_yes=args.yes
+        len(holdout), provider.model, args.prompt, args.systems, assume_yes=args.yes
     ):
         return 0
 
-    rules = fit_rules(split.development)
     llm = LLMCategoriser(provider)
-    hybrid = HybridCategoriser(fit_rules(split.development), LLMCategoriser(provider))
+    systems = _systems_for_run(args.systems, split.development, provider, llm)
 
     # Priced at the rate for the model that actually ran, not a constant:
     # the report has to be able to say what this run cost, not what some other
@@ -269,11 +355,28 @@ def main(argv: list[str] | None = None) -> int:
 
     result = evaluate(
         holdout,
-        [rules, llm, hybrid],
+        systems,
         input_price_per_million=input_price,
         output_price_per_million=output_price,
     )
     print(result.render())
+
+    if args.save_predictions:
+        stem = f"{args.split}-{args.prompt.replace('/', '-')}"
+        destination = PREDICTIONS_DIR / f"{stem}.jsonl"
+        rows = write_predictions(
+            destination,
+            holdout,
+            [PredictedSystem(name=r.name, predictions=r.predictions) for r in result.systems],
+            header={
+                "split": args.split,
+                "prompt_version": args.prompt,
+                "model": provider.model,
+                "live": is_live,
+            },
+        )
+        print()
+        print(f"predictions: {rows} rows -> {destination} (local only, never published)")
 
     if is_live:
         usage = llm.usage()

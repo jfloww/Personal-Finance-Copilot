@@ -133,25 +133,135 @@ reported beside F1, because a system that wins by two points at forty times the 
 - **Ambiguity is authored, never inferred.** A row gets an acceptable-label set because a human
   wrote down why it has no single right answer — not because two annotators happened to disagree.
   Ambiguous rows are reported as their own stratum *and* included in the overall figures.
+- **Prompt changes are chosen on the development split.** Looking at the benchmark to decide what to
+  fix is how a benchmark stops measuring generalisation. `--split development` exists so that search
+  has somewhere to happen; the benchmark is then measured once, afterwards.
+- **Row-level predictions are recorded, and never published.** A run writes every prediction to
+  `data/eval/predictions/`, which the repository denies by default. That makes failure analysis and
+  re-scoring free, and keeps a file of real transaction ids off the internet.
 - **No synthetic data in the headline number.** Public sample data can support development; it does
   not support the F1 that gets quoted.
 
-### Current status of the numbers
+### The measured results
 
-**There are no scores yet, and the repository does not claim any.** The harness, the metrics, the
-report, and all three systems are built and tested; the hand-labelled dataset is still being
-annotated and no model has been run against it. When both exist, `run_evaluation.py` produces the
-comparison — `--live` is the only way to spend money, and it prints a cost estimate and waits for
-confirmation before sending anything.
+Claude Haiku 4.5 against a **frozen 135-row validation benchmark**, merchant-disjoint from the 265
+development rows the rules were fitted on and the prompts were tuned against. Every figure below
+came out of a run; nothing here is estimated.
 
-The sequence for turning that on safely is [docs/LIVE-VALIDATION.md](docs/LIVE-VALIDATION.md): one
-real call, then twenty-five rows, then the full holdout, checking something specific at each step.
+| System | Macro F1 | Weighted F1 | Acceptable-label accuracy | Abstention | Mean latency | p95 latency | Cost / row |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Rule baseline | 0.0464 | 0.0549 | 0.0667 | 80.0% | — | — | no external calls |
+| Claude, `categorise/v1` | 0.4277 | 0.7201 | 0.6593 | 0.0% | 1,779 ms | 2,327 ms | $0.001781 |
+| Claude, `categorise/v2` *(rejected)* | 0.4397 | 0.7108 | 0.6519 | 0.0% | — | 3,000 ms | $0.001864 |
+| **Claude, `categorise/v3`** *(selected)* | **0.4724** | **0.7298** | **0.6667** | 0.0% | **1,472 ms** | **1,781 ms** | $0.001913 |
 
-Every result will be recorded against a dataset version, an engine version, and a **prompt
-version** — `categorise/v1` today. "Macro F1 0.81" is not a result; "macro F1 0.81 under
-categorise/v1 on dataset v3" is one, because it can be reproduced.
+The rule baseline answers only where a hand-fitted merchant pattern matches — 20% of benchmark rows
+— and its macro F1 is what an honest floor looks like. It makes no model calls, so its token and
+cost cells are empty rather than zero: an unpriced system and a free one are different facts.
 
----
+Mean latency is absent for v2 because that run predates the field. It is left blank rather than
+back-filled from a number nobody measured.
+
+**Acceptable-label accuracy equals exact-match accuracy here**, because no benchmark row carries an
+authored acceptable-label set. See the ambiguity note above: this project refuses to read annotator
+disagreement as ambiguity, so the ambiguous stratum is structurally present and empty.
+
+### The two prompt iterations
+
+**v2 was rejected.** It targeted `LIVING_OTHER`, which v1 was over-predicting 18 times against a true
+support of 1. It did not move that category at all — F1 0.1053 before and after — while accuracy,
+weighted F1, cost, and tail latency all worsened. Macro F1 rose, and only because v2 stopped
+predicting a label it was never right about, shrinking its own denominator from 21 to 20; the
+*summed* per-label F1 fell, 8.9814 → 8.7936.
+
+**v3 was adopted.** Its two rules came from the development split, not the benchmark:
+
+| | Development (where it was chosen) | Benchmark (measured once, after) |
+|---|---|---|
+| Macro F1 | 0.4263 → 0.5699 (**+0.1436**) | 0.4277 → 0.4724 (**+0.0447**) |
+| Weighted F1 | 0.6243 → 0.7390 | 0.7201 → 0.7298 |
+| Accuracy | 0.6302 → 0.7434 | 0.6593 → 0.6667 |
+| `REFUND` F1 | 0.0000 → 0.6896 | 0.6667 → 0.6667 |
+| `TRANSFER` F1 | 0.3111 → 0.7576 | 0.8421 → 0.8292 |
+
+v3 adds two rules to v1 — money returning to a spending account is `REFUND` rather than the category
+of the purchase it reverses, and paying a card balance is `TRANSFER` rather than `LIVING_CARD_FEE`.
+Both were checked against development gold before being written: card payments are `TRANSFER` 7/7,
+inbound person-to-person credits are `REFUND` 8/8, no counterexamples.
+
+**The gap between those two columns is the most useful number in this table.** The fix that
+transformed the development split barely moved the benchmark, and moved it through a different
+category entirely — `LIVING_CARD_FEE`, 0.0000 → 0.5000. `REFUND` was *already* working on the
+benchmark, so the failure the rule was written for did not exist there. Merchant-disjoint splitting
+produces genuinely different difficulty on each side, and this is what that looks like measured
+rather than assumed. The development number is what tuning buys; the benchmark number is what
+generalises.
+
+Half of v3's benchmark macro gain is also a denominator effect (+0.0225 of +0.0447). It is adopted
+on the strength of the other three metrics, which have no such artifact: accuracy, weighted F1, and
+both latency figures all moved the right way, for 7.4% more cost per row. That is the pattern v2
+failed to produce.
+
+### Failure analysis
+
+Generated from row-level predictions that never leave the machine; only counts and taxonomy label
+pairs are published. Under the selected prompt, on the benchmark:
+
+| Failure mode | Rows | Most frequent |
+|---|---:|---|
+| Abstention would have been better | 20 | dining/subscriptions/grocery → `LIVING_OTHER` |
+| Thin description (< 15 chars) | 9 | `LIVING_TRAVEL` → `COMMUTE_TRANSIT_FARE` ×5 |
+| Confident but wrong (≥ 0.80) | 7 | `REFUND` → `TRANSFER` ×4 |
+| Polysemous merchant | 5 | one merchant, two gold labels |
+| Annotators disagreed too | 3 | the model fails where people did |
+| Rules right, model wrong | 1 | — |
+| **Model right, rules wrong** | **82** | what the model is actually buying |
+
+Mean confidence is **0.8411 when right and 0.6078 when wrong**, so the confidence signal carries
+real information — which is what makes the largest bucket actionable. Twenty rows were answered
+below 0.60 and wrong, nearly all collapsing into `LIVING_OTHER`. Routing those to abstention rather
+than to a catch-all is the next change, and it is a threshold rather than a prompt.
+
+### Reproducing it
+
+Three commands from `backend/`. The first is the only one that spends money, and it prints a cost
+estimate and waits for confirmation before sending anything.
+
+```bash
+uv run python run_evaluation.py --live --save-predictions
+uv run python analyse_failures.py data/eval/predictions/holdout-categorise-v3.jsonl \
+    --json ../docs/eval/failure-analysis.json
+uv run python build_public_results.py
+```
+
+Useful variants:
+
+```bash
+uv run python run_evaluation.py                              # stand-in provider, free, no key
+uv run python run_evaluation.py --live --limit 25            # 25 rows, for a first live run
+uv run python run_evaluation.py --split development          # look for failures without spending
+                                                             # the benchmark's independence on it
+uv run python run_evaluation.py --prompt categorise/v1       # reproduce an archived score
+uv run python run_evaluation.py --systems rules+llm          # skip the hybrid, halve the calls
+```
+
+Prerequisites are a labelled dataset at `data/eval/transactions.csv` and `ANTHROPIC_API_KEY` in
+`backend/.env`. Neither is in this repository. Every scored prompt version is kept in
+`SYSTEM_PROMPTS`, so `--prompt` can reproduce a score from the code that produced it.
+
+Archived reports are under [docs/eval/runs/](docs/eval/runs/); the aggregate artifact the public
+deployment serves is [docs/eval/public-results.json](docs/eval/public-results.json).
+
+### What these numbers do not support
+
+- **One model, one provider.** Nothing here says how hard this task is in general.
+- **135 benchmark rows**, five categories with fewer than five rows each. One corrected row moves
+  macro F1 by several points.
+- **Single runs, no repeats.** Run-to-run variance is not separated from the effect of a prompt —
+  though the v1 benchmark reproduced to four decimal places across two runs a day apart.
+- **A frozen validation benchmark, not a held-out test set.** Results from it have informed prompt
+  design, so it can no longer measure what a truly untouched split would.
+- **One annotator**, adjudicating their own double pass. Agreement is measured but not independent.
 
 ## Privacy and handling
 
@@ -216,7 +326,7 @@ Both live in `backend/.env`, which is gitignored:
 |---|---|
 | `CONNECTION_STRING` | PostgreSQL DSN. Database-backed tests skip; persistence is unavailable. |
 | `ANTHROPIC_API_KEY` | LLM categorisation is unavailable; rules and the harness still run. |
-| `ANTHROPIC_MODEL` | Defaults to `claude-sonnet-5`. |
+| `ANTHROPIC_MODEL` | Defaults to `claude-sonnet-5`. The published benchmark ran `claude-haiku-4-5`. |
 
 ```bash
 uv run alembic upgrade head        # apply migrations, if a DSN is set
@@ -230,8 +340,13 @@ uv run python transactions.py commit statement.csv ...  # see "Importing transac
 uv run python validate_dataset.py               # check annotations as you go
 uv run python llm_smoke.py                      # inspect the exact request, offline, no key
 uv run python llm_smoke.py --live               # one real API call; needs a key
-uv run python run_evaluation.py                 # rules vs LLM vs hybrid
+uv run python run_evaluation.py                 # rules vs LLM vs hybrid, stand-in provider
+uv run python run_evaluation.py --live --save-predictions   # the benchmark; costs money
+uv run python analyse_failures.py <predictions.jsonl>       # sanitized failure analysis
+uv run python build_public_results.py           # aggregate artifact for the public deployment
 ```
+
+See [Reproducing it](#reproducing-it) for the exact sequence and its prerequisites.
 
 ### Importing transactions
 
@@ -336,8 +451,10 @@ instead, which costs one paragraph and no risk.
 
 Stated plainly, because a portfolio that only lists strengths is not evidence of judgement.
 
-- **No evaluation scores exist yet.** The dataset is still being annotated and no model has been run
-  against it. Nothing here quotes an F1.
+- **The benchmark is 135 rows, one model, and single runs.** Real scores exist and are quoted
+  above, but five categories carry fewer than five rows each, no second provider has been scored,
+  and run-to-run variance is not separated from prompt effects. It is a frozen validation benchmark,
+  not a held-out test set: its results have informed prompt design.
 - **The LLM client is synchronous.** It uses `urllib`, so there is no connection pooling and calls
   cannot overlap; a few hundred transactions are classified serially. The transport is a port, so an
   async adapter is a contained change — deferred until batch throughput is a measured problem rather

@@ -57,3 +57,22 @@ def test_tokens_are_counted_separately() -> None:
     assert usage.input_tokens == 900
     assert usage.output_tokens == 80
     assert usage.total_tokens == 980
+
+
+def test_mean_latency_is_reported_alongside_the_percentiles() -> None:
+    """A mean is what a total-runtime estimate needs and what people expect. It
+    is also the one a single slow call drags, so it never travels alone."""
+    usage = Usage(calls=4, latencies_ms=(100, 200, 300, 1000))
+    assert usage.mean_latency_ms == 400
+    assert usage.p50_latency_ms == 200
+
+
+def test_mean_latency_is_none_when_nothing_was_timed() -> None:
+    """Zero would read as an instantaneous system rather than an unmeasured one."""
+    assert Usage(calls=0).mean_latency_ms is None
+
+
+def test_the_mean_is_rounded_rather_than_truncated() -> None:
+    # 32/3 = 10.67. Truncation would report 10 and quietly understate every
+    # latency in the report by up to a millisecond per call.
+    assert Usage(calls=3, latencies_ms=(10, 11, 11)).mean_latency_ms == 11

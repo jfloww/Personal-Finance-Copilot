@@ -42,6 +42,19 @@ class Usage:
         return self.input_tokens + self.output_tokens
 
     @property
+    def mean_latency_ms(self) -> int | None:
+        """The average wait per call.
+
+        Reported beside p50 and p95 rather than instead of them. A mean is the
+        number people expect and the one a total-runtime estimate needs; it is
+        also the one a single slow call can drag, which is why it never travels
+        alone here.
+        """
+        if not self.latencies_ms:
+            return None
+        return round(sum(self.latencies_ms) / len(self.latencies_ms))
+
+    @property
     def p50_latency_ms(self) -> int | None:
         return self._percentile(50)
 
