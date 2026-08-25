@@ -315,10 +315,7 @@ def build() -> PublicResults:
             {
                 "version": "categorise/v3",
                 "status": "selected prompt",
-                "chosen_on": (
-                    "the development split, with the benchmark measured only "
-                    "afterwards"
-                ),
+                "chosen_on": "the development split, with the benchmark measured only afterwards",
                 "hypothesis": (
                     "Two failures found on development under v1. REFUND scored F1 "
                     "0.0000 on 19 rows - the model identified the merchant and never "

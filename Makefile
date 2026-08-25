@@ -2,14 +2,18 @@
 
 BACKEND := backend
 
+# The same set .github/workflows/ci.yml formats and lints, so one list keeps a
+# green `make check` and a green CI from drifting apart.
+PY_FILES := src tests analyse_failures.py annotate.py build_eval_subset.py build_public_results.py llm_smoke.py run_evaluation.py transactions.py validate_dataset.py
+
 install:
 	cd $(BACKEND) && uv sync
 
 fmt:
-	cd $(BACKEND) && uv run ruff format src tests annotate.py build_eval_subset.py llm_smoke.py run_evaluation.py transactions.py validate_dataset.py && uv run ruff check --fix src tests annotate.py build_eval_subset.py llm_smoke.py run_evaluation.py transactions.py validate_dataset.py 
+	cd $(BACKEND) && uv run ruff format $(PY_FILES) && uv run ruff check --fix $(PY_FILES)
 
 lint:
-	cd $(BACKEND) && uv run ruff format --check src tests annotate.py build_eval_subset.py llm_smoke.py run_evaluation.py transactions.py validate_dataset.py && uv run ruff check src tests annotate.py build_eval_subset.py llm_smoke.py run_evaluation.py transactions.py validate_dataset.py 
+	cd $(BACKEND) && uv run ruff format --check $(PY_FILES) && uv run ruff check $(PY_FILES)
 
 types:
 	cd $(BACKEND) && uv run mypy
