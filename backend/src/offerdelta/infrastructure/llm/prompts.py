@@ -39,12 +39,15 @@ from typing import Final
 #: Every scored version is kept in `SYSTEM_PROMPTS` rather than overwritten, so
 #: an archived score can still be reproduced from the code that produced it.
 #:
-#: v1 is the selected prompt. v2 was measured against the same frozen
-#: validation benchmark and rejected: it did not move LIVING_OTHER at all,
-#: while accuracy, weighted F1, cost, and tail latency all worsened. It is
-#: retained as a rejected experiment, not deleted - a change that was tried
-#: and measured is evidence, and deleting it would leave only the successes.
-PROMPT_VERSION: Final = "categorise/v1"
+#: v3 is the selected prompt.
+#:
+#: v2 was rejected: it did not move the category it targeted, and accuracy,
+#: weighted F1, cost, and tail latency all worsened. v3 was chosen on the
+#: development split instead of the benchmark, and on the benchmark it improved
+#: macro F1, weighted F1, accuracy, mean latency, and p95 together, for 7.4%
+#: more cost per row. Every version stays here: a change that was tried and
+#: measured is evidence, and deleting it would leave only the successes.
+PROMPT_VERSION: Final = "categorise/v3"
 
 #: The name the model must call. Also the mechanism that makes the output
 #: structured: the request pins `tool_choice` to this, so prose is not one of
@@ -93,10 +96,45 @@ _V2: Final = _V1.replace(
   category, choose the specific one and lower your confidence instead.""",
 )
 
+#: v3 branches from v1, not from the rejected v2, and adds two rules.
+#:
+#: **Measured cause, and measured on the development split** - the benchmark was
+#: not consulted in choosing this, which is the whole point of having a split to
+#: search in. Over 265 development rows under v1:
+#:
+#: - REFUND scored F1 0.0000 on 19 rows. Not close: zero. The model identified
+#:   the merchant correctly and never noticed the money had come back, saying
+#:   things like "appears to be a credit or refund" and then labelling the row
+#:   with the category of the purchase it reversed. It reasons about what a
+#:   merchant is before it reasons about which way the money moved.
+#: - TRANSFER lost 13 of 26 rows to LIVING_CARD_FEE. The model recognised card
+#:   bill payments correctly - "likely a credit card bill payment" - and then
+#:   picked the fee category, because nothing told it that paying a balance and
+#:   being charged a membership fee are different things.
+#:
+#: Both rules were checked against development gold before being written, and
+#: neither has a counterexample there: card payments are TRANSFER 7/7, inbound
+#: person-to-person credits are REFUND 8/8.
+_V3: Final = _V1.replace(
+    """- Choose exactly one label from the list supplied in the tool schema. If none
+  fits, choose the closest and lower your confidence.""",
+    """- Choose exactly one label from the list supplied in the tool schema. If none
+  fits, choose the closest and lower your confidence.
+- Decide which way the money moved before deciding what the merchant is. A
+  transaction that returns money to a spending account - a credit, a reversal,
+  a statement credit, money received back from another person - is REFUND.
+  Label it REFUND rather than the category of the purchase it reverses, and
+  rather than TRANSFER.
+- Paying off a card balance is TRANSFER: the money moves between two accounts
+  the same person owns. LIVING_CARD_FEE is only for a charge the issuer levies
+  for holding the card, such as an annual membership fee.""",
+)
+
 #: Every version that has been scored, so an archived result stays reproducible.
 SYSTEM_PROMPTS: Final[dict[str, str]] = {
     "categorise/v1": _V1,
     "categorise/v2": _V2,
+    "categorise/v3": _V3,
 }
 
 

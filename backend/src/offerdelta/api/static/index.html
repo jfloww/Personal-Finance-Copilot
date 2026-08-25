@@ -245,8 +245,9 @@
   </p>
   <p class="standfirst">
     That boundary is only worth drawing if the model half is measured, so it is.
-    Below is what it scored, what one prompt change cost, and why that change was
-    rejected.
+    Below is what it scored against a deterministic baseline, the two prompt
+    changes that were measured against it — one rejected, one adopted — and
+    what the model still gets wrong.
   </p>
 </header>
 
@@ -305,8 +306,19 @@
     categories cannot hide behind the common ones. Weighted F1 says what a
     typical row experiences. Coverage and accuracy-when-answered separate
     declining to guess from guessing wrong. They are reported together on
-    purpose — see the prompt experiment below for what happens when one of them
+    purpose — see the prompt iterations below for what happens when one of them
     is read on its own.
+  </p>
+
+  <h3>Ambiguity is authored, never inferred</h3>
+  <p id="ambiguity" class="pending">Loading…</p>
+  <p>
+    Two annotators disagreed on 31 of the 400 labelled rows. It would be easy to
+    call those ambiguous and let any of the two labels count as correct, and it
+    would raise every system's score. It is refused here, because disagreement
+    usually means one annotator was wrong. Those rows are still reported — as a
+    <em>difficulty</em> stratum, which measures whether the model struggles where
+    people did, and claims nothing about the rows having two right answers.
   </p>
 </section>
 
@@ -328,73 +340,76 @@
 <section>
   <h2>Prompt iteration</h2>
   <p class="lead">
-    One controlled change, measured against the same benchmark, and rejected.
+    Two changes have been measured against this benchmark. One was rejected, one
+    was adopted, and both are published — a page showing only the changes that
+    worked is not a record of anything.
   </p>
-  <ol class="steps">
-    <li>
-      <b>Hypothesis</b>
-      <p id="hypothesis" class="pending">Loading…</p>
-    </li>
-    <li>
-      <b>Controlled change</b>
-      <p id="change" class="pending">Loading…</p>
-    </li>
-    <li>
-      <b>Result</b>
-      <p id="outcome" class="pending">Loading…</p>
-    </li>
-    <li>
-      <b>Decision — reject v2, keep v1 as the selected prompt</b>
-      <p id="decision" class="pending">Loading…</p>
-    </li>
-  </ol>
+  <p>
+    The difference between them is where each was <em>chosen</em>. v2 was
+    designed by looking at the benchmark, which is how a benchmark stops
+    measuring generalisation. v3 was designed entirely on the 265-row
+    development split and measured on the benchmark exactly once, afterwards.
+  </p>
+  <div id="iterations"><p class="pending">Loading…</p></div>
 
-  <h3>Why macro F1 rose anyway</h3>
-  <div class="panel">
-    <p id="denominator" class="pending">Loading…</p>
-  </div>
+  <h3>On reading macro F1</h3>
   <p>
     Macro F1 is not a misleading metric — it is the one that stops a model hiding
-    a rare class it ignores, which is why it is the headline here. Deciding on
-    macro F1 <em>alone</em> is what misleads. Read beside accuracy, weighted F1,
-    cost, and tail latency, the same run says the opposite of what the headline
-    number says on its own.
+    a rare class it ignores, which is why it is a headline here. Deciding on
+    macro F1 <em>alone</em> is what misleads, and this benchmark has produced a
+    clean example of why: the average divides by the number of labels in play,
+    so a system that simply stops predicting a label it was never right about
+    raises its own score without answering anything better. Every macro move
+    above is therefore published with its denominator and its summed F1, so the
+    half that is real can be told from the half that is arithmetic.
   </p>
 
-  <h3>Per-label movement, v1 to v2</h3>
+  <h3>Per-label movement, v1 to v3, on the benchmark</h3>
   <div class="scroll" id="movement"><p class="pending">Loading…</p></div>
+</section>
+
+<section>
+  <h2>What tuning bought, and what generalised</h2>
+  <p class="lead">
+    The most useful number on this page is the gap between these two.
+  </p>
+  <div id="gap"><p class="pending">Loading…</p></div>
 </section>
 
 <section>
   <h2>Failure analysis</h2>
   <p class="lead">
-    What the selected prompt still gets wrong, stated plainly rather than
-    averaged away.
+    What the selected prompt still gets wrong, sorted into modes that each imply
+    a different fix. Generated from row-level predictions that stay on the
+    machine that produced them; only the counts and taxonomy label pairs travel.
   </p>
-  <ul class="plain">
-    <li>
-      <b>Travel against transit.</b> The largest single confusion. A rideshare to
-      an airport and a rideshare to work look identical in a description line;
-      the distinction lives in context the model is not given. This is the next
-      prompt version, deliberately deferred until the v2 result was recorded.
-    </li>
-    <li>
-      <b><code>LIVING_OTHER</code> as a catch-all.</b> Predicted 18 times against
-      a true support of 1. v2 was written to fix exactly this and did not move it
-      at all, which is the most useful thing the experiment produced.
-    </li>
-    <li>
-      <b>Refunds read as transfers.</b> A credit posting to a card is a refund or
-      a payment depending on where the money came from, which the description
-      does not say.
-    </li>
-    <li>
-      <b>Five categories have fewer than five rows.</b> The evaluation report
-      says so in a warning block rather than in a footnote, because macro F1
-      weights those equally with the large classes and one correction moves the
-      headline several points.
-    </li>
-  </ul>
+  <div id="failures"><p class="pending">Loading…</p></div>
+</section>
+
+<section>
+  <h2>Reproducing this</h2>
+  <p class="lead">
+    Three commands, in order, from <code>backend/</code>. The first is the only
+    one that spends money, and it prints an estimate and waits for confirmation
+    before sending anything.
+  </p>
+  <div class="panel"><ol class="plain" id="reproduce"><li class="pending">Loading…</li></ol></div>
+  <p>
+    A labelled dataset at <code>data/eval/transactions.csv</code> and an
+    <code>ANTHROPIC_API_KEY</code> are the prerequisites. Neither is in this
+    repository. Without the key the harness substitutes a provider that always
+    abstains, so the pipeline, the split, and the report can all be exercised for
+    free — and the report names the provider that ran, so a stand-in result can
+    never be mistaken for a real one.
+  </p>
+</section>
+
+<section>
+  <h2>Limitations</h2>
+  <p class="lead">
+    Stated here rather than left for a reader to discover.
+  </p>
+  <div class="panel"><ul class="plain" id="limitations"><li class="pending">Loading…</li></ul></div>
 </section>
 
 <section>
@@ -531,53 +546,139 @@ function renderResults(systems, selected) {
 function renderMovement(rows) {
   const moved = rows.filter(r => r.delta !== null && r.delta !== 0);
   const gone = rows.filter(r => r.delta === null);
-  const cell = r => {
-    const klass = r.delta > 0 ? "up" : "down";
-    return el("td", {class: klass}, (r.delta > 0 ? "+" : "") + r.delta.toFixed(4));
-  };
+  const cell = r => el("td", {class: r.delta > 0 ? "up" : "down"},
+    (r.delta > 0 ? "+" : "") + r.delta.toFixed(4));
   const table = el("table", {},
     el("thead", {}, el("tr", {},
-      ["label", "rows", "v1 F1", "v2 F1", "change"].map(h => el("th", {}, h)))),
+      ["label", "rows", "v1 F1", "v3 F1", "change"].map(h => el("th", {}, h)))),
     el("tbody", {}, [
       ...moved.map(r => el("tr", {},
         el("td", {class: "mono"}, r.label),
         el("td", {}, r.support),
-        el("td", {}, f4(r.v1)),
-        el("td", {}, f4(r.v2)),
+        el("td", {}, f4(r.before)),
+        el("td", {}, f4(r.after)),
         cell(r))),
       ...gone.map(r => el("tr", {},
         el("td", {class: "mono"}, r.label),
         el("td", {}, r.support),
-        el("td", {}, f4(r.v1)),
-        el("td", {}, f4(r.v2)),
-        el("td", {class: "flat"}, r.v2 === null ? "no longer predicted" : "newly predicted"))),
+        el("td", {}, f4(r.before)),
+        el("td", {}, f4(r.after)),
+        el("td", {class: "flat"}, r.after === null ? "no longer predicted" : "newly predicted"))),
     ]));
-  const note = el("p", {},
-    (rows.length - moved.length - gone.length) + " further labels scored identically under both prompts.");
-  $("movement").replaceChildren(table, note);
+  const same = rows.length - moved.length - gone.length;
+  $("movement").replaceChildren(table,
+    el("p", {}, same + " further labels scored identically under both prompts."));
 }
 
-function renderExperiment(x) {
-  say("hypothesis", x.hypothesis);
-  say("change", x.controlled_change);
+/* A macro-F1 move, split into the half that is better answers and the half
+   that is only a smaller denominator. Publishing the mean without this lets a
+   system that stopped guessing a never-correct label read as improved. */
+function renderDecomposition(m) {
+  const rows = [
+    ["labels in the macro average", m.labels_in_average_before + " → " + m.labels_in_average_after],
+    ["summed per-label F1", m.summed_f1_before.toFixed(4) + " → " + m.summed_f1_after.toFixed(4)],
+    ["macro F1 as reported", m.macro_f1_before.toFixed(4) + " → " + m.macro_f1_after.toFixed(4)],
+    ["held at the old denominator", m.macro_f1_after_held_at_the_old_denominator.toFixed(4)],
+    ["gain from better answers", (m.gain_from_better_answers >= 0 ? "+" : "") + m.gain_from_better_answers.toFixed(4)],
+    ["gain from a smaller denominator", (m.gain_from_a_smaller_denominator >= 0 ? "+" : "") + m.gain_from_a_smaller_denominator.toFixed(4)],
+  ];
+  return el("table", {}, el("tbody", {}, rows.map(([k, v]) =>
+    el("tr", {}, el("td", {}, k), el("td", {class: "mono"}, v)))));
+}
 
-  const o = x.outcome;
-  say("outcome",
-    o.target_unmoved + " " +
-    o.categories_regressed.length + " categories regressed (" + o.categories_regressed.join(", ") + ") " +
-    "against " + o.categories_improved.length + " improvements (" + o.categories_improved.join(", ") + "). " +
-    "v1 is also " + o.v1_is_cheaper_by_pct + "% cheaper per row and has " +
-    o.v1_p95_latency_lower_by_ms.toLocaleString() + " ms lower p95 latency.");
+function pair(label, values, digits, unit) {
+  const fmtv = v => v === null || v === undefined ? "—"
+    : (digits === 0 ? v.toLocaleString() : v.toFixed(digits)) + (unit || "");
+  return el("tr", {}, el("td", {}, label),
+    el("td", {}, fmtv(values[0])), el("td", {}, fmtv(values[1])));
+}
 
-  say("decision", x.reasoning + " " + x.caveat);
-  say("denominator", x.why_macro_f1_rose_anyway);
+function renderIterations(iterations, selected) {
+  const blocks = iterations.map(it => {
+    const adopted = it.decision === "adopted";
+    const head = el("h3", {}, it.version,
+      el("span", {class: "tag " + (adopted ? "sel" : "rej")},
+        adopted ? "selected prompt" : "rejected experiment"));
+
+    const body = [
+      el("p", {}, el("b", {}, "Chosen on: "), it.chosen_on),
+      el("p", {}, el("b", {}, "Hypothesis. "), it.hypothesis),
+      el("p", {}, el("b", {}, "Change. "), it.change),
+    ];
+
+    if (it.result_on_development) {
+      const d = it.result_on_development;
+      body.push(el("p", {}, el("b", {}, "On the development split, where it was chosen:")));
+      body.push(el("div", {class: "scroll"}, el("table", {},
+        el("thead", {}, el("tr", {}, ["", "before", "after"].map(h => el("th", {}, h)))),
+        el("tbody", {}, [
+          pair("macro F1", d.macro_f1, 4),
+          pair("weighted F1", d.weighted_f1, 4),
+          pair("accuracy", d.accuracy, 4),
+          pair("REFUND F1", d.refund_f1, 4),
+          pair("TRANSFER F1", d.transfer_f1, 4),
+        ]))));
+    }
+
+    if (it.result_on_benchmark) {
+      const b = it.result_on_benchmark;
+      body.push(el("p", {}, el("b", {}, "On the frozen benchmark, measured once afterwards:")));
+      body.push(el("div", {class: "scroll"}, el("table", {},
+        el("thead", {}, el("tr", {}, ["", "before", "after"].map(h => el("th", {}, h)))),
+        el("tbody", {}, [
+          pair("macro F1", b.macro_f1, 4),
+          pair("weighted F1", b.weighted_f1, 4),
+          pair("accuracy", b.accuracy, 4),
+          pair("mean latency", b.mean_latency_ms, 0, " ms"),
+          pair("p95 latency", b.p95_latency_ms, 0, " ms"),
+        ]))));
+      body.push(el("p", {}, "Cost per row changed by " + b.cost_per_row_change_pct + "%."));
+    }
+
+    if (it.result) body.push(el("p", {}, el("b", {}, "Result. "), it.result));
+    if (it.why) body.push(el("p", {}, el("b", {}, "Decision. "), it.why));
+    body.push(el("div", {class: "scroll"}, renderDecomposition(it.macro_decomposition)));
+
+    return el("div", {class: "panel"}, head, ...body);
+  });
+  $("iterations").replaceChildren(...blocks);
+}
+
+function renderGap(g) {
+  $("gap").replaceChildren(
+    el("p", {class: "lead"}, g.finding),
+    el("div", {class: "scroll"}, el("table", {},
+      el("thead", {}, el("tr", {}, ["", "macro F1 gain"].map(h => el("th", {}, h)))),
+      el("tbody", {},
+        el("tr", {}, el("td", {}, "development split (tuned on)"),
+          el("td", {class: "up"}, "+" + g.development_macro_f1_gain.toFixed(4))),
+        el("tr", {}, el("td", {}, "frozen benchmark (independent)"),
+          el("td", {class: "up"}, "+" + g.benchmark_macro_f1_gain.toFixed(4)))))),
+    el("p", {}, g.why),
+    el("p", {}, el("b", {}, g.reading)));
+}
+
+function renderFailures(f) {
+  const rows = f.failure_modes.map(m => el("tr", {},
+    el("td", {class: "mono"}, m.name),
+    el("td", {}, m.rows),
+    el("td", {}, m.top_confusions.slice(0, 3).map(c => c.pair + " ×" + c.count).join("; ") || "—")));
+
+  $("failures").replaceChildren(
+    el("p", {}, "Of " + f.rows + " benchmark rows the selected prompt answered " +
+      f.answered + ", got " + f.correct + " right and " + f.wrong + " wrong, and abstained on " +
+      f.abstained + ". Mean confidence was " + f.mean_confidence_when_right +
+      " when right and " + f.mean_confidence_when_wrong + " when wrong."),
+    el("div", {class: "scroll"}, el("table", {},
+      el("thead", {}, el("tr", {}, ["failure mode", "rows", "most frequent"].map(h => el("th", {}, h)))),
+      el("tbody", {}, rows))),
+    el("ul", {class: "plain"}, f.failure_modes.map(m => el("li", {},
+      el("b", {}, m.name + ": "), m.what_it_means))));
 }
 
 function renderError(message) {
-  for (const id of ["hypothesis", "change", "outcome", "decision", "denominator"]) {
-    say(id, message);
-  }
-  for (const id of ["flow", "results", "movement"]) {
+  for (const id of ["crossing"]) $(id).textContent = "—";
+  for (const id of ["flow", "results", "movement", "iterations", "gap", "failures"]) {
     $(id).replaceChildren(el("p", {}, message));
   }
 }
@@ -587,10 +688,17 @@ fetch("/demo/evaluation/latest")
   .then(d => {
     renderFlow(d.dataset_flow);
     $("crossing").textContent = d.method.merchants_on_both_sides;
-    renderResults(d.systems, d.prompt_experiment.selected_prompt);
-    renderExperiment(d.prompt_experiment);
-    renderMovement(d.prompt_experiment.per_label_movement);
+    $("ambiguity").textContent = d.method.ambiguity_policy;
+    renderResults(d.systems, d.selected_prompt);
+    renderIterations(d.prompt_iterations, d.selected_prompt);
+    renderGap(d.development_did_not_predict_the_benchmark);
+    renderFailures(d.failure_analysis);
+    const adopted = d.prompt_iterations.find(i => i.decision === "adopted");
+    renderMovement(adopted.per_label_movement);
+    $("limitations").replaceChildren(...d.limitations.map(item => el("li", {}, item)));
     $("backlog").replaceChildren(...d.backlog.map(item => el("li", {}, item)));
+    $("reproduce").replaceChildren(...d.method.reproduce.map(cmd =>
+      el("li", {}, el("code", {}, cmd))));
     $("generated").textContent = d.generated_at.slice(0, 10);
   })
   .catch(err => renderError(

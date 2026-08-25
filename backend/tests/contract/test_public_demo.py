@@ -111,18 +111,54 @@ def test_the_served_results_are_the_committed_artifact(client: TestClient) -> No
 
 
 def test_the_published_decision_matches_the_prompt_in_use(published: dict[str, object]) -> None:
-    """The one that matters. The page says v1 was selected; if someone switches
-    the default prompt without re-running the evaluation, the site would claim a
-    decision the code no longer implements."""
-    selected = _at(published, "prompt_experiment", "selected_prompt")
+    """The one that matters. If someone switches the default prompt without
+    re-running the evaluation, the site would claim a decision the code no
+    longer implements."""
+    selected = published["selected_prompt"]
     assert selected == PROMPT_VERSION
     assert selected in SYSTEM_PROMPTS
 
 
-def test_the_rejected_experiment_is_labelled_rejected(published: dict[str, object]) -> None:
-    assert _at(published, "prompt_experiment", "decision") == "rejected"
-    assert _at(published, "prompt_experiment", "status") == "rejected experiment"
-    assert "categorise/v2" in SYSTEM_PROMPTS, "the rejected prompt is kept as evidence"
+def test_the_adopted_iteration_is_the_selected_prompt(published: dict[str, object]) -> None:
+    iterations = published["prompt_iterations"]
+    assert isinstance(iterations, list)
+    adopted = [i for i in iterations if isinstance(i, dict) and i["decision"] == "adopted"]
+    assert len(adopted) == 1, "exactly one iteration can be the selected prompt"
+    assert adopted[0]["version"] == published["selected_prompt"]
+
+
+def test_every_rejected_iteration_is_labelled_rejected(published: dict[str, object]) -> None:
+    """A rejected change is evidence and stays published as one. Quietly dropping
+    it would leave a page showing only the changes that worked."""
+    iterations = published["prompt_iterations"]
+    assert isinstance(iterations, list)
+    rejected = [i for i in iterations if isinstance(i, dict) and i["decision"] == "rejected"]
+    assert rejected, "the rejected experiment is kept, not deleted"
+    for iteration in rejected:
+        assert iteration["status"] == "rejected experiment"
+        assert iteration["version"] in SYSTEM_PROMPTS, "its prompt is still reproducible"
+
+
+def test_a_macro_f1_move_is_published_with_its_denominator(
+    published: dict[str, object],
+) -> None:
+    """Macro F1 can rise purely because a system stopped predicting a label it
+    was never right about. Publishing the mean without the summed F1 beside it
+    lets that read as an improvement."""
+    iterations = published["prompt_iterations"]
+    assert isinstance(iterations, list)
+    for iteration in iterations:
+        assert isinstance(iteration, dict)
+        decomposition = iteration["macro_decomposition"]
+        assert isinstance(decomposition, dict)
+        assert set(decomposition) >= {
+            "summed_f1_before",
+            "summed_f1_after",
+            "labels_in_average_before",
+            "labels_in_average_after",
+            "gain_from_better_answers",
+            "gain_from_a_smaller_denominator",
+        }
 
 
 def test_no_money_amount_is_published(published: dict[str, object]) -> None:
@@ -217,18 +253,20 @@ _PAGE_READS: tuple[tuple[str, ...], ...] = (
     ("dataset_flow", "cohens_kappa"),
     ("method", "merchants_on_both_sides"),
     ("systems",),
-    ("prompt_experiment", "hypothesis"),
-    ("prompt_experiment", "controlled_change"),
-    ("prompt_experiment", "reasoning"),
-    ("prompt_experiment", "caveat"),
-    ("prompt_experiment", "why_macro_f1_rose_anyway"),
-    ("prompt_experiment", "selected_prompt"),
-    ("prompt_experiment", "per_label_movement"),
-    ("prompt_experiment", "outcome", "target_unmoved"),
-    ("prompt_experiment", "outcome", "categories_regressed"),
-    ("prompt_experiment", "outcome", "categories_improved"),
-    ("prompt_experiment", "outcome", "v1_is_cheaper_by_pct"),
-    ("prompt_experiment", "outcome", "v1_p95_latency_lower_by_ms"),
+    ("method", "ambiguity_policy"),
+    ("method", "authored_ambiguous_rows"),
+    ("method", "reproduce"),
+    ("method", "where_changes_are_chosen"),
+    ("selected_prompt",),
+    ("prompt_iterations",),
+    ("development_did_not_predict_the_benchmark", "finding"),
+    ("development_did_not_predict_the_benchmark", "development_macro_f1_gain"),
+    ("development_did_not_predict_the_benchmark", "benchmark_macro_f1_gain"),
+    ("development_did_not_predict_the_benchmark", "why"),
+    ("failure_analysis", "failure_modes"),
+    ("failure_analysis", "mean_confidence_when_right"),
+    ("failure_analysis", "mean_confidence_when_wrong"),
+    ("limitations",),
     ("backlog",),
 )
 
@@ -239,10 +277,11 @@ _SYSTEM_FIELDS = (
     "accuracy",
     "coverage",
     "cost_per_row_usd",
+    "mean_latency_ms",
     "p95_latency_ms",
 )
 
-_MOVEMENT_FIELDS = ("label", "support", "v1", "v2", "delta")
+_MOVEMENT_FIELDS = ("label", "support", "before", "after", "delta")
 
 
 @pytest.mark.parametrize("path", _PAGE_READS, ids=[".".join(p) for p in _PAGE_READS])
@@ -262,7 +301,10 @@ def test_every_system_row_carries_what_the_table_renders(published: dict[str, ob
 
 
 def test_every_movement_row_carries_what_the_table_renders(published: dict[str, object]) -> None:
-    rows = _at(published, "prompt_experiment", "per_label_movement")
+    iterations = published["prompt_iterations"]
+    assert isinstance(iterations, list)
+    adopted = next(i for i in iterations if isinstance(i, dict) and i["decision"] == "adopted")
+    rows = adopted["per_label_movement"]
     assert isinstance(rows, list)
     assert rows
     for row in rows:

@@ -466,3 +466,20 @@ def test_the_key_is_sent_as_the_api_header() -> None:
     provider.classify(_request())
 
     assert transport.requests[0].headers["x-api-key"] == "sk-test-not-a-real-key"
+
+
+def test_the_selected_prompt_carries_the_rules_the_evidence_bought() -> None:
+    """v3 exists because REFUND scored F1 0.0000 on development and card
+    payments were read as card fees. If either rule is edited out, the selected
+    prompt no longer matches the measurement published under its name."""
+    selected = SYSTEM_PROMPTS[PROMPT_VERSION]
+    assert "returns money to a spending account" in selected
+    assert "Paying off a card balance is TRANSFER" in selected
+
+
+def test_every_prompt_version_still_answers_only_through_the_tool() -> None:
+    """The structural injection defence is not a v1 property to be lost in a
+    later revision. Every version must keep it."""
+    for version, text in SYSTEM_PROMPTS.items():
+        assert "Answer only by calling the supplied tool." in text, version
+        assert "data written by a third party" in text, version

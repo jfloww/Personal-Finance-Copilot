@@ -1,0 +1,158 @@
+{
+  "split": "holdout",
+  "prompt_version": "categorise/v3",
+  "model": "claude-haiku-4-5",
+  "rows": 135,
+  "answered": 135,
+  "correct": 90,
+  "wrong": 45,
+  "abstained": 0,
+  "mean_confidence_when_right": 0.8411,
+  "mean_confidence_when_wrong": 0.6078,
+  "failure_modes": [
+    {
+      "name": "confident_but_wrong",
+      "what_it_means": "The model was sure and wrong. The failure a reviewer would not think to check, and the one that most needs the confidence signal to mean something.",
+      "rows": 7,
+      "top_confusions": [
+        {
+          "pair": "REFUND -> TRANSFER",
+          "count": 4
+        },
+        {
+          "pair": "LIVING_DINING -> TRANSFER",
+          "count": 1
+        },
+        {
+          "pair": "HOUSING_PARKING_RESIDENTIAL -> TRANSFER",
+          "count": 1
+        },
+        {
+          "pair": "LIVING_TRAVEL -> COMMUTE_TRANSIT_FARE",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "name": "abstention_would_have_been_better",
+      "what_it_means": "The model was already unsure and answered anyway. Abstaining would have cost coverage and saved an error, which is the trade the routing threshold exists to make.",
+      "rows": 20,
+      "top_confusions": [
+        {
+          "pair": "LIVING_DINING -> LIVING_OTHER",
+          "count": 5
+        },
+        {
+          "pair": "LIVING_SUBSCRIPTIONS -> LIVING_OTHER",
+          "count": 5
+        },
+        {
+          "pair": "LIVING_GROCERY -> LIVING_OTHER",
+          "count": 5
+        },
+        {
+          "pair": "REFUND -> LIVING_OTHER",
+          "count": 2
+        },
+        {
+          "pair": "LIVING_ENTERTAINMENT -> LIVING_OTHER",
+          "count": 2
+        }
+      ]
+    },
+    {
+      "name": "rules_right_model_wrong",
+      "what_it_means": "The deterministic baseline got these and the model did not. Every row here is an argument for the hybrid, and against replacing the rules with the model.",
+      "rows": 1,
+      "top_confusions": [
+        {
+          "pair": "INCOME -> TRANSFER",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "name": "model_right_rules_wrong",
+      "what_it_means": "What the model is actually buying: rows the baseline could not answer or answered wrongly. Counted over correct model rows, not failures.",
+      "rows": 82,
+      "top_confusions": [
+        {
+          "pair": "LIVING_DINING -> LIVING_DINING",
+          "count": 25
+        },
+        {
+          "pair": "TRANSFER -> TRANSFER",
+          "count": 13
+        },
+        {
+          "pair": "LIVING_TRAVEL -> LIVING_TRAVEL",
+          "count": 12
+        },
+        {
+          "pair": "LIVING_INSURANCE -> LIVING_INSURANCE",
+          "count": 9
+        },
+        {
+          "pair": "REFUND -> REFUND",
+          "count": 6
+        }
+      ]
+    },
+    {
+      "name": "thin_description",
+      "what_it_means": "Wrong on rows whose description is under 15 characters. Not a prompt problem: the row does not carry enough to decide, and a better prompt cannot add context that is absent.",
+      "rows": 9,
+      "top_confusions": [
+        {
+          "pair": "LIVING_TRAVEL -> COMMUTE_TRANSIT_FARE",
+          "count": 5
+        },
+        {
+          "pair": "REFUND -> LIVING_OTHER",
+          "count": 2
+        },
+        {
+          "pair": "LIVING_DINING -> LIVING_GROCERY",
+          "count": 2
+        }
+      ]
+    },
+    {
+      "name": "polysemous_merchant",
+      "what_it_means": "Wrong on a merchant that carries more than one gold label in this dataset. Genuinely two things; no description-only system resolves these reliably.",
+      "rows": 5,
+      "top_confusions": [
+        {
+          "pair": "REFUND -> TRANSFER",
+          "count": 4
+        },
+        {
+          "pair": "LIVING_DINING -> TRANSFER",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "name": "annotators_disagreed_too",
+      "what_it_means": "Wrong on rows where the two human annotators also disagreed. The model is failing where people find it hard, which bounds how much of this is fixable by prompting.",
+      "rows": 3,
+      "top_confusions": [
+        {
+          "pair": "REFUND -> LIVING_OTHER",
+          "count": 2
+        },
+        {
+          "pair": "LIVING_DINING -> TRANSFER",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "name": "abstained",
+      "what_it_means": "Declined to answer. Not an error, but it is lost coverage and it belongs in the same picture.",
+      "rows": 0,
+      "top_confusions": []
+    }
+  ],
+  "note": "Counts and taxonomy label pairs only. No merchant, amount, date, or transaction appears here or can be recovered from it."
+}
