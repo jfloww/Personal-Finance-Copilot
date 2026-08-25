@@ -115,10 +115,10 @@ RULES_HEADER: Final = "--- rules"
 
 #: The runs this artifact is built from. Every number below is parsed out of one
 #: of these files; none is typed in by hand.
-BENCH_V1: Final = RUNS / "2026-08-25-haiku-4-5-benchmark-v1.txt"
-BENCH_V3: Final = RUNS / "2026-08-25-haiku-4-5-benchmark-v3.txt"
-DEV_V1: Final = RUNS / "2026-08-25-haiku-4-5-development-v1.txt"
-DEV_V3: Final = RUNS / "2026-08-25-haiku-4-5-development-v3.txt"
+BENCH_V1: Final = RUNS / "2026-08-24-haiku-4-5-benchmark-v1.txt"
+BENCH_V3: Final = RUNS / "2026-08-24-haiku-4-5-benchmark-v3.txt"
+DEV_V1: Final = RUNS / "2026-08-24-haiku-4-5-development-v1.txt"
+DEV_V3: Final = RUNS / "2026-08-24-haiku-4-5-development-v3.txt"
 
 #: The rejected experiment, kept from the day it was run. It predates the mean
 #: latency field, so that one reads null for v2 rather than being invented.

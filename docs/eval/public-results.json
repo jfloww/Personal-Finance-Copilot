@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-08-25T00:56:00+00:00",
+  "generated_at": "2026-08-25T01:51:34+00:00",
   "scope": "Aggregate results only. No transactions, amounts, merchants, dates, or per-row predictions appear here. Real financial ingestion is disabled in public demo mode by design.",
   "dataset_flow": {
     "imported_transactions": 742,
@@ -177,7 +177,7 @@
         "cost_per_row_change_pct": 7.4
       },
       "decision": "adopted",
-      "why": "Every headline accuracy metric moved up together - macro F1, weighted F1, and plain accuracy - and mean and p95 latency both fell, for 9.6% more cost per row. That is the pattern v2 failed to produce: v2 moved one metric and worsened the rest.",
+      "why": "Every headline accuracy metric moved up together - macro F1, weighted F1, and plain accuracy - and mean and p95 latency both fell, for 7.4% more cost per row. That is the pattern v2 failed to produce: v2 moved one metric and worsened the rest. Half the macro gain is a smaller denominator rather than better answers, which is why it is decomposed below and why the decision does not rest on macro F1.",
       "macro_decomposition": {
         "labels_in_average_before": 21,
         "labels_in_average_after": 20,
