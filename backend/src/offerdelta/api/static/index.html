@@ -268,10 +268,12 @@
   </p>
   <div class="flow" id="flow"><p class="pending">Loading figures…</p></div>
   <p>
-    Every row was annotated twice, independently, before the labels were
-    reconciled — so the ceiling on any model score is a measured number rather
-    than an assumption. Cohen's kappa is reported next to raw agreement because
-    where one category dominates, 92% raw agreement can mean very little.
+    Every row was labelled twice by one annotator, in two separate passes,
+    and the disagreements were then adjudicated, so the ceiling on any model
+    score is a measured number rather than an assumption. Cohen's kappa is
+    reported next to raw agreement because where one category dominates, 92%
+    raw agreement can mean very little. Both figures measure intra-rater
+    repeat consistency, not independent inter-annotator agreement.
   </p>
 </section>
 
@@ -313,12 +315,13 @@
   <h3>Ambiguity is authored, never inferred</h3>
   <p id="ambiguity" class="pending">Loading…</p>
   <p>
-    Two annotators disagreed on 31 of the 400 labelled rows. It would be easy to
-    call those ambiguous and let any of the two labels count as correct, and it
-    would raise every system's score. It is refused here, because disagreement
-    usually means one annotator was wrong. Those rows are still reported — as a
-    <em>difficulty</em> stratum, which measures whether the model struggles where
-    people did, and claims nothing about the rows having two right answers.
+    The two annotation passes disagreed on 31 of the 400 labelled rows. It
+    would be easy to call those ambiguous and let either label count as
+    correct, and it would raise every system's score. It is refused here,
+    because disagreement usually means one pass was wrong. Those rows are
+    still reported as a <em>difficulty</em> stratum, which measures whether
+    the model struggles where the annotator did, and claims nothing about
+    the rows having two right answers.
   </p>
 </section>
 
@@ -346,8 +349,8 @@
   </p>
   <p>
     The difference between them is where each was <em>chosen</em>. v2 was
-    designed by looking at the benchmark, which is how a benchmark stops
-    measuring generalisation. v3 was designed entirely on the 265-row
+    designed by looking at the benchmark, so the same rows both chose and
+    judged the change. v3 was designed entirely on the 265-row
     development split and measured on the benchmark exactly once, afterwards.
   </p>
   <div id="iterations"><p class="pending">Loading…</p></div>
@@ -369,7 +372,7 @@
 </section>
 
 <section>
-  <h2>What tuning bought, and what generalised</h2>
+  <h2>What tuning bought, and what the frozen benchmark showed</h2>
   <p class="lead">
     The most useful number on this page is the gap between these two.
   </p>
@@ -460,7 +463,7 @@
     <a href="/demo/evaluation/latest"><b>Evaluation JSON</b><span>Every figure on this page, as served</span></a>
     <a href="/demo/comparison"><b>Comparison demo</b><span>The deterministic engine, fully derived</span></a>
     <a href="/docs"><b>API reference</b><span>OpenAPI, public routes only</span></a>
-    <a href="https://github.com/jfloww/wdo-delta"><b>Source</b><span>github.com/jfloww/wdo-delta</span></a>
+    <a href="https://github.com/jfloww/Personal-Finance-Copilot"><b>Source</b><span>github.com/jfloww/Personal-Finance-Copilot</span></a>
   </div>
 </section>
 
@@ -652,7 +655,7 @@ function renderGap(g) {
       el("tbody", {},
         el("tr", {}, el("td", {}, "development split (tuned on)"),
           el("td", {class: "up"}, "+" + g.development_macro_f1_gain.toFixed(4))),
-        el("tr", {}, el("td", {}, "frozen benchmark (independent)"),
+        el("tr", {}, el("td", {}, "frozen benchmark (not tuned on)"),
           el("td", {class: "up"}, "+" + g.benchmark_macro_f1_gain.toFixed(4)))))),
     el("p", {}, g.why),
     el("p", {}, el("b", {}, g.reading)));

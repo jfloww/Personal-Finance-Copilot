@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-08-25T01:51:34+00:00",
+  "generated_at": "2026-08-25T16:17:52+00:00",
   "scope": "Aggregate results only. No transactions, amounts, merchants, dates, or per-row predictions appear here. Real financial ingestion is disabled in public demo mode by design.",
   "dataset_flow": {
     "imported_transactions": 742,
@@ -30,7 +30,7 @@
       "scoring",
       "inference settings"
     ],
-    "ambiguity_policy": "A row is ambiguous only when a human authored an acceptable-label set and wrote down why. Annotator disagreement is never read as ambiguity: disagreement usually means one annotator was wrong, and treating it as legitimate would inflate every system's score. No row in this benchmark carries an authored set, so acceptable-label accuracy and exact-match accuracy coincide here.",
+    "ambiguity_policy": "A row is ambiguous only when a human authored an acceptable-label set and wrote down why. Disagreement between the two annotation passes is never read as ambiguity: it usually means one pass was wrong, and treating it as legitimate would inflate every system's score. No row in this benchmark carries an authored set, so acceptable-label accuracy and exact-match accuracy coincide here.",
     "authored_ambiguous_rows": 0,
     "reproduce": [
       "uv run python run_evaluation.py --live --save-predictions",
@@ -128,7 +128,7 @@
     {
       "version": "categorise/v3",
       "status": "selected prompt",
-      "chosen_on": "the development split, with the benchmark untouched",
+      "chosen_on": "the development split, with the benchmark measured only afterwards",
       "hypothesis": "Two failures found on development under v1. REFUND scored F1 0.0000 on 19 rows - the model identified the merchant and never noticed the money had come back. TRANSFER lost 13 of 26 rows to LIVING_CARD_FEE, because nothing distinguished paying a card balance from being charged a membership fee.",
       "change": "Two rules added to v1, not to the rejected v2. Eight lines, none removed. Both were checked against development gold before being written: card payments are TRANSFER 7/7, inbound person-to-person credits are REFUND 8/8, no counterexamples.",
       "result_on_development": {
@@ -312,8 +312,8 @@
     "finding": "The fix that transformed the development split barely moved the benchmark, and moved it through a different category.",
     "development_macro_f1_gain": 0.1436,
     "benchmark_macro_f1_gain": 0.0447,
-    "why": "REFUND was already at F1 0.6667 on the benchmark under v1, against 0.0000 on development, so the failure the rule was written for did not exist there. The benchmark's gain came mostly from LIVING_CARD_FEE, 0.0000 to 0.5000. Merchant-disjoint splitting produces genuinely different difficulty on each side, and this is what that looks like when measured rather than assumed.",
-    "reading": "The development number is what tuning buys. The benchmark number is what generalises. Reporting the first as the result is how benchmarks stop meaning anything."
+    "why": "REFUND was already at F1 0.6667 on the benchmark under v1, against 0.0000 on development, so the failure the rule was written for did not exist there. The benchmark's gain came mostly from LIVING_CARD_FEE, 0.0000 to 0.5000. The two merchant-disjoint splits presented different category difficulty in these runs, and a single pair of runs cannot separate that from the prompt or from run-to-run variation.",
+    "reading": "The development number is what tuning buys. The benchmark number is what a split the prompt was not tuned on recorded, once. Reporting the first as the result is how benchmarks stop meaning anything."
   },
   "failure_analysis": {
     "split": "holdout",
@@ -450,8 +450,8 @@
         ]
       },
       {
-        "name": "annotators_disagreed_too",
-        "what_it_means": "Wrong on rows where the two human annotators also disagreed. The model is failing where people find it hard, which bounds how much of this is fixable by prompting.",
+        "name": "annotation_passes_disagreed",
+        "what_it_means": "Wrong on rows where the two annotation passes also disagreed. The model is failing where the annotator found it hard, which bounds how much of this is fixable by prompting.",
         "rows": 3,
         "top_confusions": [
           {
@@ -478,7 +478,7 @@
     "135 benchmark rows. Five categories carry fewer than five rows each, so one corrected row moves macro F1 by several points.",
     "Single runs, no repeats. Run-to-run variance is not separated from the effect of a prompt, though the v1 benchmark reproduced to four decimal places across two runs a day apart.",
     "No authored-ambiguous rows, so the ambiguous stratum is structurally present and empty, and acceptable-label accuracy equals exact match.",
-    "One annotator, adjudicating their own double pass. Inter-annotator agreement is measured but not independent."
+    "One annotator, labelling every row twice and adjudicating their own passes. The reported agreement and kappa are intra-rater repeat consistency, not independent inter-annotator agreement."
   ],
   "backlog": [
     "Routing on confidence. 20 benchmark rows were answered below 0.60 and wrong, nearly all collapsing into LIVING_OTHER; mean confidence is 0.84 when right and 0.61 when wrong, so the signal is informative enough to abstain on.",

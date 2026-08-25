@@ -275,9 +275,10 @@ def build() -> PublicResults:
             ],
             "ambiguity_policy": (
                 "A row is ambiguous only when a human authored an acceptable-label "
-                "set and wrote down why. Annotator disagreement is never read as "
-                "ambiguity: disagreement usually means one annotator was wrong, and "
-                "treating it as legitimate would inflate every system's score. No "
+                "set and wrote down why. Disagreement between the two annotation "
+                "passes is never read as ambiguity: it usually means one pass was "
+                "wrong, and treating it as legitimate would inflate every system's "
+                "score. No "
                 "row in this benchmark carries an authored set, so acceptable-label "
                 "accuracy and exact-match accuracy coincide here."
             ),
@@ -314,7 +315,10 @@ def build() -> PublicResults:
             {
                 "version": "categorise/v3",
                 "status": "selected prompt",
-                "chosen_on": "the development split, with the benchmark untouched",
+                "chosen_on": (
+                    "the development split, with the benchmark measured only "
+                    "afterwards"
+                ),
                 "hypothesis": (
                     "Two failures found on development under v1. REFUND scored F1 "
                     "0.0000 on 19 rows - the model identified the merchant and never "
@@ -374,14 +378,16 @@ def build() -> PublicResults:
                 "REFUND was already at F1 0.6667 on the benchmark under v1, against "
                 "0.0000 on development, so the failure the rule was written for did "
                 "not exist there. The benchmark's gain came mostly from "
-                "LIVING_CARD_FEE, 0.0000 to 0.5000. Merchant-disjoint splitting "
-                "produces genuinely different difficulty on each side, and this is "
-                "what that looks like when measured rather than assumed."
+                "LIVING_CARD_FEE, 0.0000 to 0.5000. The two merchant-disjoint "
+                "splits presented different category difficulty in these runs, and "
+                "a single pair of runs cannot separate that from the prompt or "
+                "from run-to-run variation."
             ),
             "reading": (
-                "The development number is what tuning buys. The benchmark number is "
-                "what generalises. Reporting the first as the result is how "
-                "benchmarks stop meaning anything."
+                "The development number is what tuning buys. The benchmark number "
+                "is what a split the prompt was not tuned on recorded, once. "
+                "Reporting the first as the result is how benchmarks stop meaning "
+                "anything."
             ),
         },
         "failure_analysis": failures,
@@ -395,8 +401,9 @@ def build() -> PublicResults:
             "places across two runs a day apart.",
             "No authored-ambiguous rows, so the ambiguous stratum is structurally "
             "present and empty, and acceptable-label accuracy equals exact match.",
-            "One annotator, adjudicating their own double pass. Inter-annotator "
-            "agreement is measured but not independent.",
+            "One annotator, labelling every row twice and adjudicating their own "
+            "passes. The reported agreement and kappa are intra-rater repeat "
+            "consistency, not independent inter-annotator agreement.",
         ],
         "backlog": [
             "Routing on confidence. 20 benchmark rows were answered below 0.60 and "

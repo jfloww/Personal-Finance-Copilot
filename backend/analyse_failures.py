@@ -216,10 +216,10 @@ def bucket_failures(
             has(lambda r: facts[r.transaction_id].polysemous_merchant, wrong),
         ),
         Bucket(
-            "annotators_disagreed_too",
-            "Wrong on rows where the two human annotators also disagreed. The "
-            "model is failing where people find it hard, which bounds how much "
-            "of this is fixable by prompting.",
+            "annotation_passes_disagreed",
+            "Wrong on rows where the two annotation passes also disagreed. The "
+            "model is failing where the annotator found it hard, which bounds "
+            "how much of this is fixable by prompting.",
             has(lambda r: r.annotators_agreed is False, wrong),
         ),
         Bucket(

@@ -167,7 +167,7 @@ def test_rows_without_a_second_annotator_are_not_counted_as_disagreements() -> N
         _p("c", "TRANSFER", "REFUND", agreed=False),
     ]
     buckets = _buckets(rows)
-    assert len(buckets["annotators_disagreed_too"].rows) == 1
+    assert len(buckets["annotation_passes_disagreed"].rows) == 1
 
 
 # --- The published half -----------------------------------------------------

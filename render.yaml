@@ -1,6 +1,6 @@
 # Render Blueprint.
 #
-# In the Render dashboard: New -> Blueprint -> connect jfloww/wdo-delta.
+# In the Render dashboard: New -> Blueprint -> connect jfloww/Personal-Finance-Copilot.
 # Render reads this file and creates the service; no manual configuration.
 #
 # The free plan sleeps after 15 minutes of inactivity and takes roughly 30

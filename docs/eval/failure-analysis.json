@@ -133,8 +133,8 @@
       ]
     },
     {
-      "name": "annotators_disagreed_too",
-      "what_it_means": "Wrong on rows where the two human annotators also disagreed. The model is failing where people find it hard, which bounds how much of this is fixable by prompting.",
+      "name": "annotation_passes_disagreed",
+      "what_it_means": "Wrong on rows where the two annotation passes also disagreed. The model is failing where the annotator found it hard, which bounds how much of this is fixable by prompting.",
       "rows": 3,
       "top_confusions": [
         {
