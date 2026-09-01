@@ -27,9 +27,11 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    #: PostgreSQL DSN. Absent in CI, which is why every database-backed test
-    #: skips rather than fails when it is missing — a green suite must not
-    #: depend on a secret that only exists on one machine.
+    #: PostgreSQL DSN. CI sets this at job level against a disposable service
+    #: container, so it is not absent there - a checkout without a `.env` is
+    #: the case that is actually missing it. Every database-backed test skips
+    #: rather than fails when it is missing, for that case: a green suite must
+    #: not depend on a secret that only exists on one machine.
     connection_string: str | None = Field(default=None, alias="CONNECTION_STRING")
 
     #: Anthropic API key. Absent in CI by design: the whole LLM client is
@@ -41,6 +43,16 @@ class Settings(BaseSettings):
     #: run without editing code. Left as None to take the client's default.
     anthropic_model: str | None = Field(default=None, alias="ANTHROPIC_MODEL")
 
+    #: Signing key for access tokens. Unlike the Anthropic key above, this is
+    #: not an external credential that costs money and cannot be faked - it is
+    #: an arbitrary self-issued string, the same kind of thing as the
+    #: hardcoded `CONNECTION_STRING` the CI workflow sets beside it. CI sets a
+    #: throwaway value so the auth suite runs there for real. Locally, absence
+    #: still means authentication is switched off and the routes that need it
+    #: disappear rather than half-work - that discipline does not depend on
+    #: whether CI happens to hold a value.
+    jwt_secret: str | None = Field(default=None, alias="JWT_SECRET")
+
     @property
     def database_available(self) -> bool:
         return bool(self.connection_string)
@@ -48,6 +60,10 @@ class Settings(BaseSettings):
     @property
     def llm_available(self) -> bool:
         return bool(self.anthropic_api_key)
+
+    @property
+    def auth_available(self) -> bool:
+        return bool(self.jwt_secret)
 
     @property
     def sqlalchemy_dsn(self) -> str:

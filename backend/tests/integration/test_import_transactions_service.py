@@ -4,8 +4,8 @@ from datetime import date
 from pathlib import Path
 
 import pytest
-from sqlalchemy.orm import Session
 
+from offerdelta.application.scope import TenantScope
 from offerdelta.application.transactions.import_transactions import (
     ImportRequest,
     import_csv,
@@ -43,24 +43,24 @@ def _file(tmp_path: Path, body: str, name: str = "aug.csv") -> Path:
     return path
 
 
-def test_an_unregistered_account_is_refused(session: Session, tmp_path: Path) -> None:
+def test_an_unregistered_account_is_refused(scope: TenantScope, tmp_path: Path) -> None:
     path = _file(tmp_path, "2026-08-17,BLUE BOTTLE,-4.50\n")
     with pytest.raises(ValidationError, match="no account"):
-        import_csv(session, _request(path))
+        import_csv(scope, _request(path))
 
 
-def test_the_error_lists_known_accounts(session: Session, tmp_path: Path) -> None:
-    AccountRepository(session).register("Chase Checking")
+def test_the_error_lists_known_accounts(scope: TenantScope, tmp_path: Path) -> None:
+    AccountRepository(scope).register("Chase Checking")
     path = _file(tmp_path, "2026-08-17,BLUE BOTTLE,-4.50\n")
     with pytest.raises(ValidationError, match="chase-checking"):
-        import_csv(session, _request(path, key="checking"))
+        import_csv(scope, _request(path, key="checking"))
 
 
-def test_a_successful_import_reports_the_batch(session: Session, tmp_path: Path) -> None:
-    AccountRepository(session).register("Checking")
+def test_a_successful_import_reports_the_batch(scope: TenantScope, tmp_path: Path) -> None:
+    AccountRepository(scope).register("Checking")
     path = _file(tmp_path, "2026-08-17,BLUE BOTTLE,-4.50\n")
 
-    outcome = import_csv(session, _request(path))
+    outcome = import_csv(scope, _request(path))
 
     assert outcome.created is True
     assert outcome.result.imported_count == 1
@@ -68,12 +68,12 @@ def test_a_successful_import_reports_the_batch(session: Session, tmp_path: Path)
     assert outcome.batch.window_start == date(2026, 8, 1)
 
 
-def test_the_identical_file_is_a_batch_level_no_op(session: Session, tmp_path: Path) -> None:
-    AccountRepository(session).register("Checking")
+def test_the_identical_file_is_a_batch_level_no_op(scope: TenantScope, tmp_path: Path) -> None:
+    AccountRepository(scope).register("Checking")
     path = _file(tmp_path, "2026-08-17,BLUE BOTTLE,-4.50\n")
 
-    first = import_csv(session, _request(path))
-    second = import_csv(session, _request(path))
+    first = import_csv(scope, _request(path))
+    second = import_csv(scope, _request(path))
 
     assert first.created is True
     assert second.created is False
@@ -82,7 +82,7 @@ def test_the_identical_file_is_a_batch_level_no_op(session: Session, tmp_path: P
 
 
 def test_a_file_that_changes_mid_read_is_refused(
-    session: Session, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    scope: TenantScope, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The batch checksum must describe the bytes actually parsed.
 
@@ -94,7 +94,7 @@ def test_a_file_that_changes_mid_read_is_refused(
     real digest would be treated as an already-imported no-op - a batch that
     silently never happened, with no report.
     """
-    AccountRepository(session).register("Checking")
+    AccountRepository(scope).register("Checking")
     path = _file(tmp_path, "2026-08-17,BLUE BOTTLE,-4.50\n")
 
     digests = iter(["digest-before-the-change", "digest-after-the-change"])
@@ -104,14 +104,14 @@ def test_a_file_that_changes_mid_read_is_refused(
     )
 
     with pytest.raises(ValidationError, match="changed while it was being read"):
-        import_csv(session, _request(path))
+        import_csv(scope, _request(path))
 
-    account = AccountRepository(session).by_key("checking")
+    account = AccountRepository(scope).by_key("checking")
     assert account is not None
-    assert TransactionRepository(session).count(account_id=account.id) == 0
+    assert TransactionRepository(scope).count(account_id=account.id) == 0
 
 
-def test_snapshot_mode_refuses_a_mapped_external_id(session: Session, tmp_path: Path) -> None:
+def test_snapshot_mode_refuses_a_mapped_external_id(scope: TenantScope, tmp_path: Path) -> None:
     """Carry-forward 2.
 
     `add_many` decides its occurrence offset purely on `external_id is not
@@ -123,7 +123,7 @@ def test_snapshot_mode_refuses_a_mapped_external_id(session: Session, tmp_path: 
     that supplies both a mode and a mapping together, so it is where this has
     to be refused.
     """
-    AccountRepository(session).register("Checking")
+    AccountRepository(scope).register("Checking")
     path = tmp_path / "aug.csv"
     path.write_text(
         "Date,Description,Amount,Ref\n2026-08-17,BLUE BOTTLE,-4.50,TXN-1\n",
@@ -142,11 +142,11 @@ def test_snapshot_mode_refuses_a_mapped_external_id(session: Session, tmp_path: 
     )
 
     with pytest.raises(ValidationError, match="snapshot mode identifies rows by content"):
-        import_csv(session, request)
+        import_csv(scope, request)
 
 
 def test_incremental_import_is_refused_after_a_snapshot_import_on_the_same_account(
-    session: Session, tmp_path: Path
+    scope: TenantScope, tmp_path: Path
 ) -> None:
     """Carry-forward 1: mixing modes on one account silently duplicates a real charge.
 
@@ -159,9 +159,9 @@ def test_incremental_import_is_refused_after_a_snapshot_import_on_the_same_accou
     the fix - identity is judged differently in each mode, so switching modes
     on the same account can duplicate or drop charges either direction.
     """
-    account = AccountRepository(session).register("Checking")
+    account = AccountRepository(scope).register("Checking")
     snapshot_path = _file(tmp_path, "2026-08-17,BLUE BOTTLE,-4.50\n")
-    snapshot_outcome = import_csv(session, _request(snapshot_path))
+    snapshot_outcome = import_csv(scope, _request(snapshot_path))
     assert snapshot_outcome.result.imported_count == 1
 
     incremental_path = tmp_path / "aug-incremental.csv"
@@ -182,6 +182,6 @@ def test_incremental_import_is_refused_after_a_snapshot_import_on_the_same_accou
     )
 
     with pytest.raises(ValidationError, match="snapshot"):
-        import_csv(session, incremental_request)
+        import_csv(scope, incremental_request)
 
-    assert TransactionRepository(session).count(account_id=account.id) == 1
+    assert TransactionRepository(scope).count(account_id=account.id) == 1

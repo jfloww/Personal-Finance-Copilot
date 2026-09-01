@@ -10,7 +10,7 @@ The real API arrives in milestone 5.
 from __future__ import annotations
 
 from collections.abc import Iterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -23,19 +23,24 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from offerdelta.api.presenters import present_comparison
+from offerdelta.api.rate_limit import FixedWindowLimiter
 from offerdelta.api.schemas import (
     ComparisonRequest,
     ComparisonSchema,
     DerivationNodeSchema,
     HealthSchema,
+    LoginSchema,
     ReadinessSchema,
+    TokenSchema,
     TransactionEntrySchema,
     TransactionStoredSchema,
     VersionSchema,
 )
+from offerdelta.application.auth import authenticate, load_active_user
 from offerdelta.application.idempotency import IdempotencyOutcome, IdempotencyService
 from offerdelta.application.queries.get_demo_comparison import get_demo_comparison
 from offerdelta.application.queries.get_demo_derivation import get_demo_derivation
+from offerdelta.application.scope import TenantScope
 from offerdelta.application.transactions.enter_transaction import (
     ManualEntry,
     enter_transaction,
@@ -44,6 +49,8 @@ from offerdelta.config import get_settings
 from offerdelta.domain.common.errors import ValidationError
 from offerdelta.domain.transactions.fingerprint import FINGERPRINT_VERSION
 from offerdelta.domain.transactions.parsing import parse_amount
+from offerdelta.domain.users.identity import normalise_email
+from offerdelta.infrastructure.auth.tokens import decode_token, issue_token
 from offerdelta.infrastructure.memory.idempotency import InMemoryIdempotencyStore
 from offerdelta.infrastructure.postgres.engine import get_engine
 
@@ -144,6 +151,16 @@ def evaluation_results() -> Response:
 #: public schema and then failing - a documented endpoint that cannot work is
 #: worse than an absent one.
 _DATABASE_CONFIGURED: Final = get_settings().database_available
+
+#: Without a signing key nothing can be authenticated. The login route hides
+#: from the schema exactly like the transaction routes hide without a
+#: database, and every protected route answers 503 rather than pretending a
+#: token could ever be valid.
+_AUTH_CONFIGURED: Final = get_settings().auth_available
+
+#: Five failed logins per address per fifteen minutes. Process-local: see
+#: `FixedWindowLimiter`'s docstring for what that does and does not guarantee.
+_login_limiter = FixedWindowLimiter(max_attempts=5, window=timedelta(minutes=15))
 
 
 @app.get("/v1/health/live", response_model=HealthSchema)
@@ -281,6 +298,65 @@ def _session() -> Iterator[Session]:
         session.commit()
 
 
+@app.post("/v1/auth/token", include_in_schema=_AUTH_CONFIGURED, response_model=TokenSchema)
+def issue_access_token(
+    body: LoginSchema, session: Annotated[Session, Depends(_session)]
+) -> TokenSchema:
+    """One endpoint, one answer shape.
+
+    Unknown address and wrong password return the same status and the same
+    body, so this cannot be used to learn who has an account. The rate-limit
+    check runs before authentication and counts every call, not only failed
+    ones, so it cannot itself be used to probe whether an address exists.
+
+    The limiter is keyed on `normalise_email`, the same function
+    `UserRepository` matches addresses on - not a second, ad hoc `.lower()`
+    here. Two normalisations that can drift apart is exactly what let
+    " victim@x.test" authenticate against the real row while opening a fresh
+    rate-limit budget: the repository stripped the space and the limiter did
+    not, so the two calls disagreed about which address they had just seen.
+    """
+    if not _login_limiter.check(normalise_email(body.email)):
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "too many attempts")
+
+    who = authenticate(session, body.email, body.password)
+    if who is None:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid credentials")
+
+    secret = get_settings().jwt_secret
+    if secret is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "authentication is not configured")
+    return TokenSchema(access_token=issue_token(who.id, secret=secret))
+
+
+def _scope(
+    session: Annotated[Session, Depends(_session)],
+    credentials: Annotated[str | None, Header(alias="Authorization")] = None,
+) -> TenantScope:
+    """Identity first, then data. Both, or neither.
+
+    The user is reloaded through `load_active_user` on every call rather than
+    trusted from the token's claims, so a deactivation takes effect on the
+    very next request instead of whenever that request's token happens to
+    expire.
+    """
+    secret = get_settings().jwt_secret
+    if secret is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "authentication is not configured")
+    if credentials is None or not credentials.startswith("Bearer "):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "not authenticated")
+
+    user_id = decode_token(credentials.removeprefix("Bearer "), secret=secret)
+    if user_id is None:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "not authenticated")
+
+    who = load_active_user(session, user_id)
+    if who is None:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "not authenticated")
+
+    return TenantScope(session=session, user=who)
+
+
 @app.post(
     "/v1/transactions",
     include_in_schema=_DATABASE_CONFIGURED,
@@ -288,7 +364,7 @@ def _session() -> Iterator[Session]:
     status_code=status.HTTP_201_CREATED,
 )
 def create_transaction(
-    body: TransactionEntrySchema, session: Annotated[Session, Depends(_session)]
+    body: TransactionEntrySchema, scope: Annotated[TenantScope, Depends(_scope)]
 ) -> TransactionStoredSchema:
     """Enter one transaction by hand.
 
@@ -311,10 +387,12 @@ def create_transaction(
     )
 
     try:
-        outcome = enter_transaction(session, entry)
+        outcome = enter_transaction(scope, entry)
     except ValidationError as error:
         # The only ValidationError this path raises is an unknown account, and
-        # its message names the registered ones.
+        # its message names the registered ones - scoped to this caller's own
+        # accounts, never another tenant's. 404, not 403: naming the resource
+        # as forbidden would itself confirm it exists.
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(error)) from error
 
     if not outcome.stored:

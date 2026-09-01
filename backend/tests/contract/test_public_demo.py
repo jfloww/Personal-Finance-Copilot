@@ -1,9 +1,14 @@
 """What the public deployment is allowed to serve.
 
-This deployment has no database, no API key, and no transactions. It does have
-a summary of evaluation runs that read someone's actual bank statements, and
-the whole point of publishing a summary rather than the runs is that the summary
-cannot be walked back to a transaction.
+The public deployment used to have no database at all - that was the entire
+safety argument before this phase. It no longer holds: Phase 0 gives Render a
+real connection and a `JWT_SECRET`, seeded with two synthetic demo tenants so
+a visitor can log in and store one invented transaction against their own
+tenant (`docs/superpowers/specs/2026-08-31-auth-and-tenant-isolation-design.md`
+§6). It still has no LLM API key and no real bank data: the summary below is
+generated from evaluation runs performed locally against real statements, and
+the whole point of publishing a summary rather than the runs is that the
+summary cannot be walked back to a transaction.
 
 So these are containment tests, not feature tests. They fail when something
 personal appears on a public route, when the published decision drifts from the
@@ -316,3 +321,8 @@ def test_the_public_schema_advertises_the_evaluation_endpoint(client: TestClient
     schema = client.get("/openapi.json").json()
     assert "/demo/evaluation/latest" in schema["paths"]
     assert "public demo mode" in schema["info"]["description"].lower()
+    if main._AUTH_CONFIGURED:
+        # The login route is part of the public surface now - nothing else in
+        # this file pins its presence, and `_AUTH_CONFIGURED` is exactly the
+        # constant deciding whether `/v1/auth/token` is advertised at all.
+        assert "/v1/auth/token" in schema["paths"]
