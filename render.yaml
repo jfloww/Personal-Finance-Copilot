@@ -18,3 +18,8 @@ services:
     dockerContext: ./backend
     healthCheckPath: /v1/health/ready
     autoDeployTrigger: commit
+    envVars:
+      - key: CONNECTION_STRING
+        sync: false
+      - key: JWT_SECRET
+        sync: false

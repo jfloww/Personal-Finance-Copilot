@@ -3,8 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import date
 
-from sqlalchemy.orm import Session
-
+from offerdelta.application.scope import TenantScope
 from offerdelta.infrastructure.postgres.repositories import (
     AccountRepository,
     ImportBatchRepository,
@@ -18,9 +17,9 @@ CHECKSUM = "a" * 64
 
 
 def _open(
-    session: Session, account_id: uuid.UUID, checksum: str = CHECKSUM
+    scope: TenantScope, account_id: uuid.UUID, checksum: str = CHECKSUM
 ) -> tuple[StoredBatch, bool]:
-    return ImportBatchRepository(session).open(
+    return ImportBatchRepository(scope).open(
         account_id,
         source_file="aug.csv",
         source_sha256=checksum,
@@ -31,17 +30,17 @@ def _open(
     )
 
 
-def test_opening_a_new_batch_reports_it_as_created(session: Session) -> None:
-    account = AccountRepository(session).register("Checking")
-    _batch, created = _open(session, account.id)
+def test_opening_a_new_batch_reports_it_as_created(scope: TenantScope) -> None:
+    account = AccountRepository(scope).register("Checking")
+    _batch, created = _open(scope, account.id)
     assert created is True
 
 
-def test_an_identical_file_returns_the_original_batch(session: Session) -> None:
+def test_an_identical_file_returns_the_original_batch(scope: TenantScope) -> None:
     """The one unambiguous form of 'already imported'."""
-    account = AccountRepository(session).register("Checking")
-    first, created_first = _open(session, account.id)
-    second, created_second = _open(session, account.id)
+    account = AccountRepository(scope).register("Checking")
+    first, created_first = _open(scope, account.id)
+    second, created_second = _open(scope, account.id)
 
     assert created_first is True
     assert created_second is False
@@ -49,26 +48,26 @@ def test_an_identical_file_returns_the_original_batch(session: Session) -> None:
     assert second.imported_at == first.imported_at
 
 
-def test_a_different_file_opens_a_new_batch(session: Session) -> None:
-    account = AccountRepository(session).register("Checking")
-    first, _ = _open(session, account.id)
-    second, created = _open(session, account.id, checksum="b" * 64)
+def test_a_different_file_opens_a_new_batch(scope: TenantScope) -> None:
+    account = AccountRepository(scope).register("Checking")
+    first, _ = _open(scope, account.id)
+    second, created = _open(scope, account.id, checksum="b" * 64)
 
     assert created is True
     assert second.id != first.id
 
 
-def test_the_same_file_in_another_account_is_a_new_batch(session: Session) -> None:
-    repo = AccountRepository(session)
+def test_the_same_file_in_another_account_is_a_new_batch(scope: TenantScope) -> None:
+    repo = AccountRepository(scope)
     checking = repo.register("Checking")
     savings = repo.register("Savings")
 
-    _first, _ = _open(session, checking.id)
-    _second, created = _open(session, savings.id)
+    _first, _ = _open(scope, checking.id)
+    _second, created = _open(scope, savings.id)
     assert created is True
 
 
-def test_a_losing_racer_gets_the_existing_batch_not_a_crash(session: Session) -> None:
+def test_a_losing_racer_gets_the_existing_batch_not_a_crash(scope: TenantScope) -> None:
     """`open()` does a SELECT, then an INSERT, with a gap between the two.
 
     Two callers racing the same `(account_id, source_sha256)` can both pass
@@ -88,8 +87,8 @@ def test_a_losing_racer_gets_the_existing_batch_not_a_crash(session: Session) ->
     below violates the real unique constraint for real, and the real
     `IntegrityError` handler has to recover it, not a stand-in for either.
     """
-    account = AccountRepository(session).register("Checking")
-    repo = ImportBatchRepository(session)
+    account = AccountRepository(scope).register("Checking")
+    repo = ImportBatchRepository(scope)
 
     def _insert() -> tuple[StoredBatch, bool]:
         return repo._insert(

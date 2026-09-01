@@ -22,6 +22,7 @@ from __future__ import annotations
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
+from typing import Final
 
 from sqlalchemy import (
     Boolean,
@@ -125,20 +126,50 @@ class ResultComponentRow(Base):
     __table_args__ = (Index("ix_result_components_run_position", "run_id", "position"),)
 
 
+#: Fixed so the migration is deterministic and the row is recognisable. Only
+#: ever created when there are orphan accounts to adopt.
+PLACEHOLDER_USER_ID: Final = uuid.UUID("00000000-0000-4000-8000-000000000001")
+
+
+class UserRow(Base):
+    """Somebody who can hold accounts.
+
+    `password_hash` is nullable, and NULL means *this user cannot log in*. The
+    migration uses that to adopt existing rows without inventing a credential,
+    and `users set-password` is how a real one arrives.
+    """
+
+    __tablename__ = "users"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True)
+    email: Mapped[str] = mapped_column(String(320), unique=True)
+    password_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
+    display_name: Mapped[str] = mapped_column(String(200))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 class AccountRow(Base):
     """An account the user has deliberately registered.
 
     The canonical `key` is what every constraint sees; `display_name` is what a
     person reads. Keeping both means normalisation can be strict without
     turning "Chase Checking" into "chase-checking" on a report.
+
+    `key` is unique only within its owner (`uq_accounts_user_key`), not
+    globally: a bank account's natural key has the same shape for everybody,
+    so `chase-checking-5718` must be free for every user to pick.
     """
 
     __tablename__ = "accounts"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True)
-    key: Mapped[str] = mapped_column(String(100), unique=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    key: Mapped[str] = mapped_column(String(100))
     display_name: Mapped[str] = mapped_column(String(200))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (UniqueConstraint("user_id", "key", name="uq_accounts_user_key"),)
 
 
 class ImportBatchRow(Base):

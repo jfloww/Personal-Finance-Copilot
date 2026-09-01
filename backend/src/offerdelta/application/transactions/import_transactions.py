@@ -12,10 +12,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
 
+from offerdelta.application.scope import TenantScope
 from offerdelta.domain.common.errors import ValidationError
-from offerdelta.infrastructure.postgres.models import ImportBatchRow
+from offerdelta.infrastructure.postgres.models import AccountRow, ImportBatchRow
 from offerdelta.infrastructure.postgres.repositories import (
     AccountRepository,
     ImportBatchRepository,
@@ -55,8 +55,14 @@ class ImportOutcome:
     result: TransactionImportResult
 
 
-def import_csv(session: Session, request: ImportRequest) -> ImportOutcome:
-    """Resolve, plan, and write one CSV import."""
+def import_csv(scope: TenantScope, request: ImportRequest) -> ImportOutcome:
+    """Resolve, plan, and write one CSV import, for one tenant.
+
+    Takes the tenant rather than a bare session. The account is resolved
+    within the scope, the batch is opened within the scope, and the rows are
+    written within the scope, so there is no step in this sequence where a
+    file could land in an account its uploader does not own.
+    """
     # Snapshot mode judges duplicates by content: a fingerprint plus a
     # per-file occurrence number. `add_many` only takes that path when a
     # record's `external_id` is None; a mapped id column would flip every
@@ -77,7 +83,7 @@ def import_csv(session: Session, request: ImportRequest) -> ImportOutcome:
             "import."
         )
 
-    accounts = AccountRepository(session)
+    accounts = AccountRepository(scope)
     account = accounts.by_key(request.account_key)
     if account is None:
         known = ", ".join(a.key for a in accounts.all()) or "none registered yet"
@@ -122,8 +128,17 @@ def import_csv(session: Session, request: ImportRequest) -> ImportOutcome:
     # or transaction row exists, so a refusal here leaves nothing behind.
     requested_mode = str(request.mode)
     prior_modes = set(
-        session.scalars(
-            select(ImportBatchRow.mode).where(ImportBatchRow.account_id == account.id)
+        scope.session.scalars(
+            # Joined to `accounts` for the tenant filter even though `account`
+            # was resolved through a scoped repository above: a statement that
+            # is safe only because of a line further up is a statement whose
+            # safety cannot be read off the statement.
+            select(ImportBatchRow.mode)
+            .join(AccountRow, AccountRow.id == ImportBatchRow.account_id)
+            .where(
+                ImportBatchRow.account_id == account.id,
+                AccountRow.user_id == scope.user.id,
+            )
         ).all()
     )
     other_modes = prior_modes - {requested_mode}
@@ -138,7 +153,7 @@ def import_csv(session: Session, request: ImportRequest) -> ImportOutcome:
             "account for the other mode."
         )
 
-    batch, created = ImportBatchRepository(session).open(
+    batch, created = ImportBatchRepository(scope).open(
         account.id,
         source_file=request.path.name,
         source_sha256=digest_after,
@@ -157,5 +172,5 @@ def import_csv(session: Session, request: ImportRequest) -> ImportOutcome:
             ),
         )
 
-    result = TransactionRepository(session).add_many(records, batch_id=batch.id)
+    result = TransactionRepository(scope).add_many(records, batch_id=batch.id)
     return ImportOutcome(batch=batch, created=True, result=result)

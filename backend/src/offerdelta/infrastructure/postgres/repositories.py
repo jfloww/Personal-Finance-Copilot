@@ -8,16 +8,19 @@ overwriting — an audit record you can quietly replace is not an audit record.
 
 from __future__ import annotations
 
+import logging
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 
+from argon2.exceptions import InvalidHashError
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from offerdelta.application.queries.get_demo_comparison import ComparisonView
+from offerdelta.application.scope import AuthenticatedUser, TenantScope
 from offerdelta.domain.common.errors import ValidationError
 from offerdelta.domain.common.money import Money
 from offerdelta.domain.common.rounding import CURRENCY_DISPLAY
@@ -26,14 +29,19 @@ from offerdelta.domain.transactions.fingerprint import (
     FINGERPRINT_VERSION,
     compute_fingerprint,
 )
+from offerdelta.domain.users.identity import normalise_email
+from offerdelta.infrastructure.auth.passwords import hash_password, verify_password
 from offerdelta.infrastructure.postgres.models import (
     AccountRow,
     ComparisonRunRow,
     ImportBatchRow,
     ResultComponentRow,
     TransactionRow,
+    UserRow,
 )
 from offerdelta.records.transactions import TransactionRecord
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -123,6 +131,22 @@ class TransactionImportResult:
     @property
     def already_stored_count(self) -> int:
         return len(self.already_stored)
+
+
+@dataclass(frozen=True)
+class StoredUser:
+    """A user as it came back from the database.
+
+    `has_password` rather than the hash itself: nothing outside
+    `UserRepository` needs the raw hash, and a type that cannot carry it
+    cannot leak it into a log line or a response by accident.
+    """
+
+    id: uuid.UUID
+    email: str
+    display_name: str
+    is_active: bool
+    has_password: bool
 
 
 def _quantised(amount: Money) -> Money:
@@ -227,16 +251,84 @@ class ComparisonRunRepository:
         return len(self._session.scalars(select(ComparisonRunRow.id)).all())
 
 
-class AccountRepository:
+class _ScopedRepository:
+    """Everything a repository needs to answer for exactly one tenant.
+
+    The constructor takes a `TenantScope` where it used to take a `Session`,
+    so a query without a tenant is not something a caller can forget to
+    write - it is something they cannot express. Subclasses still have to
+    put `user_id` in each `WHERE`; what this removes is the case where the
+    identity was never in scope to filter on at all.
+    """
+
+    def __init__(self, scope: TenantScope) -> None:
+        self._scope = scope
+        self._session = scope.session
+
+    @property
+    def _user_id(self) -> uuid.UUID:
+        return self._scope.user.id
+
+    def _require_own_account(self, account_id: uuid.UUID) -> None:
+        """An account id from a caller is only usable if this tenant owns it.
+
+        The alternative is chain of custody - the id came from a scoped
+        `AccountRepository`, so it must be safe. That is true today and it is
+        an argument about call sites; it stops being true the first time a
+        route accepts an account id from a request body. The application
+        layer is the only thing enforcing tenancy here, so the property must
+        not rest on an argument. The cost is one indexed primary-key lookup.
+
+        Deliberately the same message for "no such account" and "somebody
+        else's account": telling the caller which one it is confirms the
+        existence of a row they are not allowed to see.
+        """
+        owned = self._session.scalars(
+            select(AccountRow.id).where(
+                AccountRow.id == account_id,
+                AccountRow.user_id == self._user_id,
+            )
+        ).one_or_none()
+        if owned is None:
+            raise ValidationError(f"no account {account_id}")
+
+    def _require_own_batch(self, batch_id: uuid.UUID) -> None:
+        """A batch id from a caller is only usable if this tenant owns it.
+
+        Mirrors `_require_own_account` exactly, for the same reason:
+        `TransactionRepository.add_many` writes `batch_id` onto every row it
+        inserts, and the foreign key alone is satisfied by *any* batch, so
+        without this a caller who owns the account could still tag its rows
+        onto somebody else's import history. No entry point supplies a batch
+        id today - "nothing calls it that way" is the exact argument this
+        whole phase refuses to rest on, so the check exists before a caller
+        does rather than after one is found.
+        """
+        owned = self._session.scalars(
+            select(ImportBatchRow.id)
+            .join(AccountRow, AccountRow.id == ImportBatchRow.account_id)
+            .where(
+                ImportBatchRow.id == batch_id,
+                AccountRow.user_id == self._user_id,
+            )
+        ).one_or_none()
+        if owned is None:
+            raise ValidationError(f"no batch {batch_id}")
+
+
+class AccountRepository(_ScopedRepository):
     """Accounts exist because somebody registered them, never by accident.
 
     An import against an unknown account is refused rather than auto-creating
     one: auto-creation relocates the original bug instead of fixing it, since a
     typo still silently produces a second parallel account.
-    """
 
-    def __init__(self, session: Session) -> None:
-        self._session = session
+    Every read here filters on the scope's user. `key` is unique per user
+    rather than globally (`uq_accounts_user_key`), so an unfiltered read of a
+    key would return whichever tenant's row the database happened to hand
+    back first - and `one_or_none` would raise once two tenants had both
+    registered the same bank.
+    """
 
     def register(self, display_name: str, *, now: datetime | None = None) -> StoredAccount:
         key = canonical_account_key(display_name)
@@ -244,6 +336,7 @@ class AccountRepository:
             raise ValidationError(f"account {key!r} is already registered")
         row = AccountRow(
             id=uuid.uuid4(),
+            user_id=self._user_id,
             key=key,
             display_name=display_name.strip(),
             created_at=now or datetime.now(UTC),
@@ -257,12 +350,17 @@ class AccountRepository:
 
     def by_key(self, key: str) -> StoredAccount | None:
         row = self._session.scalars(
-            select(AccountRow).where(AccountRow.key == canonical_account_key(key))
+            select(AccountRow).where(
+                AccountRow.user_id == self._user_id,
+                AccountRow.key == canonical_account_key(key),
+            )
         ).one_or_none()
         return None if row is None else _to_stored_account(row)
 
     def all(self) -> list[StoredAccount]:
-        rows = self._session.scalars(select(AccountRow).order_by(AccountRow.key)).all()
+        rows = self._session.scalars(
+            select(AccountRow).where(AccountRow.user_id == self._user_id).order_by(AccountRow.key)
+        ).all()
         return [_to_stored_account(row) for row in rows]
 
 
@@ -272,11 +370,8 @@ def _to_stored_account(row: AccountRow) -> StoredAccount:
     )
 
 
-class ImportBatchRepository:
+class ImportBatchRepository(_ScopedRepository):
     """Batches make a re-import of the same bytes provably a no-op."""
-
-    def __init__(self, session: Session) -> None:
-        self._session = session
 
     def open(
         self,
@@ -292,10 +387,17 @@ class ImportBatchRepository:
     ) -> tuple[StoredBatch, bool]:
         """Return the batch and whether it was newly created.
 
+        The account id arrives from the caller, so ownership is verified here
+        before anything is read or written against it - see
+        `_require_own_account`. Without that, an id from a request body would
+        open a batch, and then transactions, inside somebody else's account.
+
         Two callers racing the same `(account_id, source_sha256)` can both
         pass the SELECT below before either has inserted; `_insert` is what
         survives that.
         """
+        self._require_own_account(account_id)
+
         existing = self._existing(account_id, source_sha256)
         if existing is not None:
             return _to_stored_batch(existing), False
@@ -325,7 +427,18 @@ class ImportBatchRepository:
     ) -> tuple[StoredBatch, bool]:
         """Create the row, or recover if another writer already has.
 
-        Called with no existence check of its own, so this is also the
+        Checks ownership itself rather than inheriting `open`'s check. This
+        is the only method in the layer that writes a row against an
+        `account_id` it was handed, and the foreign key alone is satisfied by
+        *any* account, so without this a call here would file a batch - and
+        then, through `batch_id`, transactions - inside somebody else's
+        account. "`open` is the only caller and it already checked" is an
+        argument about call sites, which is the argument this whole change
+        exists to stop relying on: one exception is the difference between
+        "we scope our queries" and "an unscoped query cannot be written".
+        The cost is one indexed lookup, once per import.
+
+        Called with no *existence* check of its own, so this is also the
         losing side of the race `open()` exists to survive: two callers can
         both reach here for the same `(account_id, source_sha256)` after each
         passed its own SELECT, and the unique constraint then lets only one
@@ -333,6 +446,8 @@ class ImportBatchRepository:
         `IntegrityError`, so a race still ends in the documented "existing
         batch, `created=False`" rather than a crash.
         """
+        self._require_own_account(account_id)
+
         row = ImportBatchRow(
             id=uuid.uuid4(),
             account_id=account_id,
@@ -363,9 +478,20 @@ class ImportBatchRepository:
         return _to_stored_batch(row), True
 
     def _existing(self, account_id: uuid.UUID, source_sha256: str) -> ImportBatchRow | None:
+        """The tenant filter is repeated here rather than inherited from `open`.
+
+        `open` has already refused a foreign account id, so the join is
+        redundant on that path - and it is the only thing standing between
+        this method and another tenant's batch on any path added later. A
+        query that is safe only because of what its caller checked is a query
+        whose safety is not written down anywhere it can be read.
+        """
         return self._session.scalars(
-            select(ImportBatchRow).where(
+            select(ImportBatchRow)
+            .join(AccountRow, AccountRow.id == ImportBatchRow.account_id)
+            .where(
                 ImportBatchRow.account_id == account_id,
+                AccountRow.user_id == self._user_id,
                 ImportBatchRow.source_sha256 == source_sha256,
             )
         ).one_or_none()
@@ -385,11 +511,8 @@ def _to_stored_batch(row: ImportBatchRow) -> StoredBatch:
     )
 
 
-class TransactionRepository:
+class TransactionRepository(_ScopedRepository):
     """Stores inspected bank rows without collapsing real duplicate charges."""
-
-    def __init__(self, session: Session) -> None:
-        self._session = session
 
     def add_many(
         self,
@@ -408,6 +531,18 @@ class TransactionRepository:
         existing fingerprints and external ids scoped to one account_id, so a
         mixed batch would check records from every account but the first
         against the wrong account's history and silently miss real duplicates.
+
+        The account id comes off the records, which come from the caller, so
+        ownership is verified before any of it is trusted - see
+        `_require_own_account`. Every read below then repeats the tenant
+        filter through a join to `accounts`, so no query here depends on that
+        check having happened first.
+
+        `batch_id` is the same kind of vector and gets the same check, via
+        `_require_own_batch`: it is written onto every inserted row with no
+        constraint of its own to stop it naming somebody else's import
+        history, so an id from a caller that owns the account but not the
+        batch must still be refused rather than silently accepted.
 
         The caller must also not mix identity schemes on one account. Records
         with an ``external_id`` are deduplicated against stored external ids
@@ -429,19 +564,29 @@ class TransactionRepository:
             )
 
         account_id = records[0].account_id
+        self._require_own_account(account_id)
+        if batch_id is not None:
+            self._require_own_batch(batch_id)
+
         fingerprints = {self._fingerprint(record) for record in records}
         existing = set(
             self._session.execute(
-                select(TransactionRow.fingerprint, TransactionRow.occurrence).where(
+                select(TransactionRow.fingerprint, TransactionRow.occurrence)
+                .join(AccountRow, AccountRow.id == TransactionRow.account_id)
+                .where(
                     TransactionRow.account_id == account_id,
+                    AccountRow.user_id == self._user_id,
                     TransactionRow.fingerprint.in_(fingerprints),
                 )
             ).all()
         )
         existing_external = set(
             self._session.scalars(
-                select(TransactionRow.external_id).where(
+                select(TransactionRow.external_id)
+                .join(AccountRow, AccountRow.id == TransactionRow.account_id)
+                .where(
                     TransactionRow.account_id == account_id,
+                    AccountRow.user_id == self._user_id,
                     TransactionRow.external_id.is_not(None),
                 )
             ).all()
@@ -464,8 +609,10 @@ class TransactionRepository:
                     TransactionRow.fingerprint,
                     func.max(TransactionRow.occurrence),
                 )
+                .join(AccountRow, AccountRow.id == TransactionRow.account_id)
                 .where(
                     TransactionRow.account_id == account_id,
+                    AccountRow.user_id == self._user_id,
                     TransactionRow.fingerprint.in_(fingerprints),
                 )
                 .group_by(TransactionRow.fingerprint)
@@ -551,11 +698,37 @@ class TransactionRepository:
         )
 
     def get(self, transaction_id: uuid.UUID) -> StoredTransaction | None:
-        row = self._session.get(TransactionRow, transaction_id)
+        """`None` for another tenant's row, exactly as for one that does not exist.
+
+        This was `session.get(TransactionRow, id)`, which answers for any row
+        in the table: a primary key is an address, not an authorisation, and
+        an id that reached a URL would have been enough to read somebody
+        else's charge. Not-found and not-yours are the same answer here so
+        that the response cannot be used to confirm a row exists.
+        """
+        row = self._session.scalars(
+            select(TransactionRow)
+            .join(AccountRow, AccountRow.id == TransactionRow.account_id)
+            .where(
+                TransactionRow.id == transaction_id,
+                AccountRow.user_id == self._user_id,
+            )
+        ).one_or_none()
         return None if row is None else _to_stored_transaction(row)
 
     def count(self, *, account_id: uuid.UUID | None = None) -> int:
-        statement = select(func.count()).select_from(TransactionRow)
+        """How many of *this tenant's* transactions, not how many exist.
+
+        The no-account form is the easy one to leave untenanted: it returns a
+        plausible number either way, so nothing about the result says it was
+        counting the whole table.
+        """
+        statement = (
+            select(func.count())
+            .select_from(TransactionRow)
+            .join(AccountRow, AccountRow.id == TransactionRow.account_id)
+            .where(AccountRow.user_id == self._user_id)
+        )
         if account_id is not None:
             statement = statement.where(TransactionRow.account_id == account_id)
         return self._session.scalars(statement).one()
@@ -594,4 +767,121 @@ def _to_stored_transaction(row: TransactionRow) -> StoredTransaction:
         source_file=row.source_file,
         source_line=row.source_line,
         raw_cells=dict(row.raw_cells) if row.raw_cells is not None else None,
+    )
+
+
+class UserRepository:
+    """The one repository that is not tenant-scoped.
+
+    It operates on the tenants themselves, so there is no outer tenant to
+    scope it to. Everything else takes a `TenantScope`; this takes a bare
+    `Session`, deliberately, because there is no user to scope the query to
+    before this repository has answered who is asking.
+    """
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def create(self, email: str, display_name: str, *, now: datetime | None = None) -> StoredUser:
+        address = normalise_email(email)
+        if self.by_email(address) is not None:
+            raise ValidationError(f"user {address!r} already exists")
+        row = UserRow(
+            id=uuid.uuid4(),
+            email=address,
+            password_hash=None,
+            display_name=display_name.strip(),
+            is_active=True,
+            created_at=now or datetime.now(UTC),
+        )
+        self._session.add(row)
+        try:
+            self._session.flush()
+        except IntegrityError as error:
+            # The read-then-write above already checks for this; this is the
+            # concurrent-writer case that check cannot see, not the common
+            # path - see `ImportBatchRepository._insert` for the same shape.
+            raise ValidationError(f"user {address!r} already exists") from error
+        return _to_stored_user(row)
+
+    def by_email(self, email: str) -> StoredUser | None:
+        row = self._row(email)
+        return None if row is None else _to_stored_user(row)
+
+    def by_id(self, user_id: uuid.UUID) -> StoredUser | None:
+        row = self._session.get(UserRow, user_id)
+        return None if row is None else _to_stored_user(row)
+
+    def all(self) -> list[StoredUser]:
+        rows = self._session.scalars(select(UserRow).order_by(UserRow.email)).all()
+        return [_to_stored_user(row) for row in rows]
+
+    def set_password(self, email: str, plain: str) -> None:
+        row = self._require(email)
+        row.password_hash = hash_password(plain)
+        self._session.flush()
+
+    def deactivate(self, email: str) -> None:
+        row = self._require(email)
+        row.is_active = False
+        self._session.flush()
+
+    def authenticate(self, email: str, plain: str) -> AuthenticatedUser | None:
+        """`None` for every failure: unknown address, wrong password, or deactivated.
+
+        `verify_password` runs a real verification even when there is no row
+        or no stored hash, so an unknown address does not answer faster than a
+        known one - see its docstring for why that matters.
+
+        A stored hash that is not valid argon2 at all (as opposed to simply
+        not matching) makes `verify_password` raise `InvalidHashError`. That
+        can only happen for a row that exists and carries a non-null,
+        corrupted `password_hash` - `password_hash IS NULL` already means
+        "cannot log in" and never reaches the real verifier. A caller
+        mistyping their password can neither cause nor fix a corrupted row,
+        so this is caught here rather than in `verify_password`: logged with
+        the user id (never the email - this repository is careful about what
+        identifying data reaches a log) so the corruption is not silent, but
+        still resolved to the same `None` every other failure returns. Letting
+        it escape uncaught would answer 500 for that one address while every
+        other failure answers the same way as a wrong password - a response
+        shape that is itself an enumeration signal, the exact thing
+        `verify_password`'s constant-work comparison exists to prevent.
+        """
+        row = self._row(email)
+        hashed = row.password_hash if row is not None else None
+        try:
+            verified = verify_password(plain, hashed)
+        except InvalidHashError:
+            if row is not None:
+                logger.error(
+                    "authenticate: password_hash for user %s is not a valid argon2 hash",
+                    row.id,
+                )
+            return None
+        if not verified:
+            return None
+        if row is None or not row.is_active:
+            return None
+        return AuthenticatedUser(id=row.id, email=row.email)
+
+    def _row(self, email: str) -> UserRow | None:
+        return self._session.scalars(
+            select(UserRow).where(UserRow.email == normalise_email(email))
+        ).one_or_none()
+
+    def _require(self, email: str) -> UserRow:
+        row = self._row(email)
+        if row is None:
+            raise ValidationError(f"no user {normalise_email(email)!r}")
+        return row
+
+
+def _to_stored_user(row: UserRow) -> StoredUser:
+    return StoredUser(
+        id=row.id,
+        email=row.email,
+        display_name=row.display_name,
+        is_active=row.is_active,
+        has_password=row.password_hash is not None,
     )

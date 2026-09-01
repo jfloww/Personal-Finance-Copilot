@@ -32,13 +32,14 @@ from typing import Final
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from offerdelta.application.scope import AuthenticatedUser, TenantScope
 from offerdelta.application.transactions.enter_transaction import ManualEntry, enter_transaction
 from offerdelta.application.transactions.import_transactions import ImportRequest, import_csv
 from offerdelta.config import get_settings
 from offerdelta.domain.common.errors import ValidationError
 from offerdelta.domain.transactions.parsing import parse_amount
 from offerdelta.infrastructure.postgres.engine import get_engine
-from offerdelta.infrastructure.postgres.repositories import AccountRepository
+from offerdelta.infrastructure.postgres.repositories import AccountRepository, UserRepository
 from offerdelta.ingest.commit import ImportMode, ImportWindow
 from offerdelta.ingest.dates import DateOrder
 from offerdelta.ingest.mapping import AmountSign, ColumnMapping
@@ -49,6 +50,11 @@ from offerdelta.ingest.preview import preview_csv
 _MAPPABLE: Final = frozenset(
     {"date", "description", "merchant", "external_id", "amount", "debit", "credit"}
 )
+
+#: Required on every subcommand that reads or writes financial data. There is
+#: no default: see `_scope_for` on why guessing the owner is the one mistake
+#: this script must not make.
+_USER_HELP: Final = "email of the user whose accounts and transactions this command touches"
 
 
 def _mapping(raw: str) -> ColumnMapping:
@@ -90,6 +96,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     commit = sub.add_parser("commit", help="write an import; requires --yes")
     commit.add_argument("file", type=Path)
+    commit.add_argument("--user", required=True, help=_USER_HELP)
     commit.add_argument("--account", required=True)
     commit.add_argument("--mode", required=True, choices=[m.value for m in ImportMode])
     commit.add_argument("--from", dest="window_start", type=date.fromisoformat, default=None)
@@ -105,6 +112,7 @@ def build_parser() -> argparse.ArgumentParser:
     commit.add_argument("--yes", action="store_true", help="confirm the write")
 
     add = sub.add_parser("add", help="enter one transaction by hand; requires --yes")
+    add.add_argument("--user", required=True, help=_USER_HELP)
     add.add_argument("--account", required=True)
     add.add_argument("--date", dest="posted_on", required=True, type=date.fromisoformat)
     add.add_argument("--description", required=True)
@@ -118,9 +126,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     accounts = sub.add_parser("accounts", help="register and list accounts")
     accounts_sub = accounts.add_subparsers(dest="accounts_command", required=True)
-    add = accounts_sub.add_parser("add")
-    add.add_argument("display_name")
-    accounts_sub.add_parser("list")
+    # `--user` sits on each leaf rather than on `accounts` itself: an option
+    # declared on a parser that owns subparsers has to be typed *before* the
+    # subcommand, so `accounts add --user ...` would be a usage error while
+    # `accounts --user ... add` worked. Both leaves need it, and this is the
+    # spelling a person will reach for.
+    accounts_add = accounts_sub.add_parser("add")
+    accounts_add.add_argument("--user", required=True, help=_USER_HELP)
+    accounts_add.add_argument("display_name")
+    accounts_list = accounts_sub.add_parser("list")
+    accounts_list.add_argument("--user", required=True, help=_USER_HELP)
 
     return parser
 
@@ -167,6 +182,26 @@ def _report(error: ValidationError | RuntimeError | SQLAlchemyError) -> int:
     return 1
 
 
+def _scope_for(session: Session, email: str) -> TenantScope:
+    """Whose data this command is about to touch, stated rather than assumed.
+
+    Every write below reaches a real person's financial history, and this
+    script is the one caller with no session, no token, and no browser to
+    infer that from. So `--user` is required and an unknown address is
+    refused: defaulting to "the only user" would work perfectly right up to
+    the day a second one exists, and would then quietly file one person's
+    statement under another's name.
+
+    Trusted only because the operator is at the machine's own shell with the
+    connection string in hand - this is a local administration tool, not an
+    authentication path, and it deliberately asks for no password.
+    """
+    stored = UserRepository(session).by_email(email)
+    if stored is None:
+        raise ValidationError(f"no user {email!r}; create it first with users.py create")
+    return TenantScope(session=session, user=AuthenticatedUser(id=stored.id, email=stored.email))
+
+
 def _add(args: argparse.Namespace) -> int:
     """Write one hand-entered transaction behind the same gate as an import."""
     entry = ManualEntry(
@@ -186,7 +221,7 @@ def _add(args: argparse.Namespace) -> int:
         return 2
 
     with Session(get_engine()) as session:
-        outcome = enter_transaction(session, entry)
+        outcome = enter_transaction(_scope_for(session, args.user), entry)
         session.commit()
 
     if not outcome.stored:
@@ -208,7 +243,7 @@ def _accounts(args: argparse.Namespace) -> int:
     original bug wearing a different hat.
     """
     with Session(get_engine()) as session:
-        repo = AccountRepository(session)
+        repo = AccountRepository(_scope_for(session, args.user))
         if args.accounts_command == "add":
             account = repo.register(args.display_name)
             session.commit()
@@ -246,7 +281,7 @@ def _commit(args: argparse.Namespace) -> int:
 
     with Session(get_engine()) as session:
         outcome = import_csv(
-            session,
+            _scope_for(session, args.user),
             ImportRequest(
                 path=args.file,
                 account_key=args.account,

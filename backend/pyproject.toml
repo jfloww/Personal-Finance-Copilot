@@ -8,9 +8,11 @@ requires-python = ">=3.12"
 # import-linter contract below enforces that these never reach it.
 dependencies = [
     "alembic>=1.13",
+    "argon2-cffi>=23.1",
     "fastapi>=0.115",
     "psycopg[binary]>=3.2",
     "pydantic-settings>=2.4",
+    "pyjwt>=2.9",
     "sqlalchemy>=2.0",
     "uvicorn[standard]>=0.32",
 ]
@@ -67,7 +69,7 @@ ignore = [
 [tool.ruff.lint.isort]
 # `tests` is our own code, so it sorts with `offerdelta` rather than being
 # mistaken for a third-party package.
-known-first-party = ["offerdelta", "tests", "annotate", "transactions"]
+known-first-party = ["offerdelta", "tests", "annotate", "seed_demo", "transactions", "users"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = [
@@ -83,7 +85,7 @@ strict = true
 warn_unreachable = true
 disallow_any_explicit = true
 plugins = ["pydantic.mypy"]
-files = ["src", "tests", "analyse_failures.py", "annotate.py", "build_eval_subset.py", "build_public_results.py", "llm_smoke.py", "run_evaluation.py", "transactions.py", "validate_dataset.py"]
+files = ["src", "tests", "analyse_failures.py", "annotate.py", "build_eval_subset.py", "build_public_results.py", "llm_smoke.py", "run_evaluation.py", "seed_demo.py", "transactions.py", "users.py", "validate_dataset.py"]
 
 # Pydantic's BaseModel and BaseSettings carry explicit Any in their own
 # signatures, and a wire or environment boundary deals in untyped input by
@@ -149,3 +151,20 @@ name = "CSV ingest does not depend on persistence"
 type = "forbidden"
 source_modules = ["offerdelta.ingest"]
 forbidden_modules = ["offerdelta.infrastructure"]
+
+[[tool.importlinter.contracts]]
+# Routes reach data through use cases. A route that could construct a
+# repository could construct one without a scope, and the scope is the only
+# thing keeping one tenant out of another's rows.
+#
+# `allow_indirect_imports = "true"` is load-bearing, not decoration: a plain
+# forbidden contract checks the whole chain, and `api -> application.auth ->
+# repositories` is exactly the legitimate path this task built - the API is
+# supposed to reach a repository through the application layer, only never on
+# its own. Without this flag the contract is broken from the moment it is
+# written, by the very code that is supposed to satisfy it.
+name = "API does not reach repositories directly"
+type = "forbidden"
+source_modules = ["offerdelta.api"]
+forbidden_modules = ["offerdelta.infrastructure.postgres.repositories"]
+allow_indirect_imports = "true"

@@ -18,7 +18,17 @@ from offerdelta.infrastructure.postgres.models import Base
 config = context.config
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # `disable_existing_loggers` defaults to True, which does not mean "leave
+    # everything else alone" - it means every logger that already exists and
+    # is not named in `alembic.ini`'s `[loggers]` section gets `.disabled`
+    # set, silently. In a test process that means any application logger
+    # imported before this runs - which, by the time any test body executes,
+    # is all of them - stops emitting for the rest of the session. A test
+    # asserting that some text never reaches a log would then pass whether or
+    # not that is true, because nothing reaches the log either way. Alembic
+    # owns three logger names here; it has no business switching off the
+    # ones it does not.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = Base.metadata
 

@@ -6,8 +6,8 @@ import uuid
 from pathlib import Path
 
 import pytest
-from sqlalchemy.orm import Session
 
+from offerdelta.application.scope import TenantScope
 from offerdelta.domain.common.errors import ValidationError
 from offerdelta.infrastructure.postgres.repositories import (
     AccountRepository,
@@ -33,42 +33,40 @@ ANY_ACCOUNT = uuid.UUID("33333333-3333-3333-3333-333333333333")
 
 
 def _import(
-    session: Session, account_id: uuid.UUID, tmp_path: Path, body: str, name: str
+    scope: TenantScope, account_id: uuid.UUID, tmp_path: Path, body: str, name: str
 ) -> TransactionImportResult:
     path = tmp_path / name
     path.write_text(HEADER + body, encoding="utf-8")
     preview = preview_csv(path, mapping=MAPPING, date_order=DateOrder.ISO)
     records = plan_records(preview, account_id=account_id, mode=ImportMode.INCREMENTAL, window=None)
-    return TransactionRepository(session).add_many(records)
+    return TransactionRepository(scope).add_many(records)
 
 
-def test_a_genuine_third_repeat_is_stored(session: Session, tmp_path: Path) -> None:
+def test_a_genuine_third_repeat_is_stored(scope: TenantScope, tmp_path: Path) -> None:
     """The case that silently lost money under file-local numbering."""
-    account = AccountRepository(session).register("Checking")
-    repo = TransactionRepository(session)
+    account = AccountRepository(scope).register("Checking")
+    repo = TransactionRepository(scope)
 
     _import(
-        session,
+        scope,
         account.id,
         tmp_path,
         "T1,2026-08-17,BLUE BOTTLE,-4.50\nT2,2026-08-17,BLUE BOTTLE,-4.50\n",
         "first.csv",
     )
-    result = _import(
-        session, account.id, tmp_path, "T3,2026-08-17,BLUE BOTTLE,-4.50\n", "second.csv"
-    )
+    result = _import(scope, account.id, tmp_path, "T3,2026-08-17,BLUE BOTTLE,-4.50\n", "second.csv")
 
     assert result.imported_count == 1
     assert repo.count(account_id=account.id) == 3
 
 
-def test_a_re_sent_id_is_skipped(session: Session, tmp_path: Path) -> None:
-    account = AccountRepository(session).register("Checking")
-    repo = TransactionRepository(session)
+def test_a_re_sent_id_is_skipped(scope: TenantScope, tmp_path: Path) -> None:
+    account = AccountRepository(scope).register("Checking")
+    repo = TransactionRepository(scope)
 
-    _import(session, account.id, tmp_path, "T1,2026-08-17,BLUE BOTTLE,-4.50\n", "a.csv")
+    _import(scope, account.id, tmp_path, "T1,2026-08-17,BLUE BOTTLE,-4.50\n", "a.csv")
     result = _import(
-        session,
+        scope,
         account.id,
         tmp_path,
         "T1,2026-08-17,BLUE BOTTLE,-4.50\nT2,2026-08-18,TRANSIT,-2.75\n",
@@ -96,7 +94,7 @@ def test_incremental_is_refused_without_an_id_column(tmp_path: Path) -> None:
 
 
 def test_a_new_external_id_is_written_despite_a_fingerprint_collision(
-    session: Session, tmp_path: Path
+    scope: TenantScope, tmp_path: Path
 ) -> None:
     """Proves external_id, not fingerprint, decides identity.
 
@@ -108,11 +106,11 @@ def test_a_new_external_id_is_written_despite_a_fingerprint_collision(
     cannot pass: it would either raise IntegrityError (no offset) or
     report the second row as a duplicate (fingerprint used for identity).
     """
-    account = AccountRepository(session).register("Checking")
-    repo = TransactionRepository(session)
+    account = AccountRepository(scope).register("Checking")
+    repo = TransactionRepository(scope)
 
-    _import(session, account.id, tmp_path, "T1,2026-08-17,BLUE BOTTLE,-4.50\n", "a.csv")
-    result = _import(session, account.id, tmp_path, "T2,2026-08-17,BLUE BOTTLE,-4.50\n", "b.csv")
+    _import(scope, account.id, tmp_path, "T1,2026-08-17,BLUE BOTTLE,-4.50\n", "a.csv")
+    result = _import(scope, account.id, tmp_path, "T2,2026-08-17,BLUE BOTTLE,-4.50\n", "b.csv")
 
     assert result.imported_count == 1
     assert repo.count(account_id=account.id) == 2

@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from offerdelta.domain.comparisons.derivation import DerivationNode
 
@@ -167,6 +167,23 @@ class ReadinessSchema(BaseModel):
     database: str
 
 
+class LoginSchema(BaseModel):
+    """Credentials as they arrive on the wire."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    email: str = Field(min_length=1)
+    password: str = Field(min_length=1)
+
+
+class TokenSchema(BaseModel):
+    """One bearer access token."""
+
+    model_config = ConfigDict(frozen=True)
+
+    access_token: str
+
+
 class TransactionEntrySchema(BaseModel):
     """One hand-entered transaction, as it arrives on the wire.
 
@@ -191,6 +208,23 @@ class TransactionEntrySchema(BaseModel):
             "is reported and nothing is written."
         ),
     )
+
+    @field_validator("description")
+    @classmethod
+    def _description_is_not_blank(cls, value: str) -> str:
+        """Reject whitespace-only text here, at the wire boundary.
+
+        `min_length=1` alone lets `"   "` through - it is one character or
+        more, just none of them meaningful. Stripping and re-checking here
+        means a blank description is a 422 from bad input, not a
+        `ValidationError` that reaches `enter_transaction` and gets mapped to
+        404 alongside an unknown account - the only failure that handler's
+        `except ValidationError` is meant to answer for.
+        """
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("a transaction needs a description")
+        return stripped
 
 
 class TransactionStoredSchema(BaseModel):

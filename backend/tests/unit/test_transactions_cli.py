@@ -2,14 +2,22 @@ from __future__ import annotations
 
 import uuid
 from pathlib import Path
+from typing import cast
 
 import pytest
+from sqlalchemy.orm import Session
 
+from offerdelta.application.scope import AuthenticatedUser, TenantScope
 from offerdelta.config import get_settings
 from offerdelta.domain.common.errors import ValidationError
 from offerdelta.infrastructure.postgres import engine as pg_engine
 from offerdelta.ingest.mapping import AmountSign
 from transactions import build_parser, main
+
+#: Every subcommand that touches data requires one. These tests are about
+#: argument parsing and the write gate, not about who the operator is, so
+#: they pass a constant address that never reaches a database.
+USER = "--user=operator@example.test"
 
 HEADER = "Date,Description,Amount\n"
 
@@ -36,12 +44,12 @@ def test_a_misspelled_map_flag_is_an_error(tmp_path: Path) -> None:
 def test_commit_requires_a_mode(tmp_path: Path) -> None:
     parser = build_parser()
     with pytest.raises(SystemExit):
-        parser.parse_args(["commit", str(_file(tmp_path)), "--account=checking", "--yes"])
+        parser.parse_args(["commit", str(_file(tmp_path)), USER, "--account=checking", "--yes"])
 
 
 def test_snapshot_commit_requires_a_window(tmp_path: Path) -> None:
     args = build_parser().parse_args(
-        ["commit", str(_file(tmp_path)), "--account=checking", "--mode=snapshot", "--yes"]
+        ["commit", str(_file(tmp_path)), USER, "--account=checking", "--mode=snapshot", "--yes"]
     )
     assert args.window_start is None  # the service refuses; parser does not guess
 
@@ -63,6 +71,7 @@ def test_commit_without_yes_writes_nothing(
         [
             "commit",
             str(_file(tmp_path)),
+            USER,
             "--account=checking",
             "--mode=snapshot",
             "--from=2026-08-01",
@@ -82,6 +91,7 @@ def test_commit_does_not_render_the_preview_table(
         [
             "commit",
             str(_file(tmp_path)),
+            USER,
             "--account=checking",
             "--mode=snapshot",
             "--from=2026-08-01",
@@ -117,9 +127,11 @@ def test_commit_prints_the_summary_even_with_yes(
 ) -> None:
     """An unattended run must still say what it is about to do.
 
-    The account does not exist, so `import_csv` raises `ValidationError` and
-    `main` returns 1 before any write -- this only needs a read against the
-    account table, never a write, to prove the summary already printed.
+    Neither the user nor the account exists, so `_scope_for` raises
+    `ValidationError` and `main` returns 1 before any write -- this only
+    needs a read against the users table, never a write, to prove the
+    summary already printed. The summary is what is under test, and it is
+    printed before the session is even opened.
     """
     if not get_settings().database_available:
         pytest.skip("CONNECTION_STRING is not set; needs a live PostgreSQL")
@@ -129,6 +141,7 @@ def test_commit_prints_the_summary_even_with_yes(
         [
             "commit",
             str(_file(tmp_path)),
+            f"--user=nobody-{uuid.uuid4().hex[:12]}@example.test",
             f"--account={account}",
             "--mode=snapshot",
             "--from=2026-08-01",
@@ -161,6 +174,7 @@ def test_commit_reports_a_missing_connection_string_without_a_traceback(
             [
                 "commit",
                 str(_file(tmp_path)),
+                USER,
                 "--account=checking",
                 "--mode=snapshot",
                 "--from=2026-08-01",
@@ -193,6 +207,7 @@ def test_commit_refuses_when_stdin_gives_no_input(
         [
             "commit",
             str(_file(tmp_path)),
+            USER,
             "--account=checking",
             "--mode=snapshot",
             "--from=2026-08-01",
@@ -208,12 +223,18 @@ def test_commit_refuses_when_stdin_gives_no_input(
 
 
 def test_add_requires_every_field() -> None:
+    """Each case omits exactly one required field, `--user` included.
+
+    Whose transaction this is has no default and cannot be inferred from a
+    shell, so it is as required as the amount.
+    """
     parser = build_parser()
     for missing in (
-        ["add", "--date=2026-08-17", "--description=x", "--amount=-1"],
-        ["add", "--account=checking", "--description=x", "--amount=-1"],
-        ["add", "--account=checking", "--date=2026-08-17", "--amount=-1"],
-        ["add", "--account=checking", "--date=2026-08-17", "--description=x"],
+        ["add", "--account=checking", "--date=2026-08-17", "--description=x", "--amount=-1"],
+        ["add", USER, "--date=2026-08-17", "--description=x", "--amount=-1"],
+        ["add", USER, "--account=checking", "--description=x", "--amount=-1"],
+        ["add", USER, "--account=checking", "--date=2026-08-17", "--amount=-1"],
+        ["add", USER, "--account=checking", "--date=2026-08-17", "--description=x"],
     ):
         with pytest.raises(SystemExit):
             parser.parse_args(missing)
@@ -222,7 +243,14 @@ def test_add_requires_every_field() -> None:
 def test_add_rejects_a_bad_date() -> None:
     with pytest.raises(SystemExit):
         build_parser().parse_args(
-            ["add", "--account=checking", "--date=17/08/2026", "--description=x", "--amount=-1"]
+            [
+                "add",
+                USER,
+                "--account=checking",
+                "--date=17/08/2026",
+                "--description=x",
+                "--amount=-1",
+            ]
         )
 
 
@@ -231,6 +259,7 @@ def test_add_rejects_an_unknown_flag() -> None:
         build_parser().parse_args(
             [
                 "add",
+                USER,
                 "--account=checking",
                 "--date=2026-08-17",
                 "--description=x",
@@ -248,6 +277,7 @@ def test_add_writes_nothing_without_yes(
     code = main(
         [
             "add",
+            USER,
             "--account=checking",
             "--date=2026-08-17",
             "--description=Blue Bottle",
@@ -266,6 +296,7 @@ def test_add_prints_the_summary_before_asking(
     main(
         [
             "add",
+            USER,
             "--account=checking",
             "--date=2026-08-17",
             "--description=Blue Bottle",
@@ -283,6 +314,20 @@ def test_add_prints_the_summary_before_asking(
 # ---------------------------------------------------------------- --sign wiring
 
 
+def _fake_scope(session: object, _email: str) -> TenantScope:
+    """Stand in for the user lookup, which these two tests do not exercise.
+
+    They run against `_NullSession`, so the real `_scope_for` would go
+    looking for a `users` row through an object that has no `scalars`. What
+    is under test is whether `--sign` reaches the request, not who the
+    operator is.
+    """
+    return TenantScope(
+        session=cast(Session, session),
+        user=AuthenticatedUser(id=uuid.uuid4(), email="operator@example.test"),
+    )
+
+
 def test_commit_passes_the_sign_convention_through(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -294,11 +339,12 @@ def test_commit_passes_the_sign_convention_through(
     """
     captured: dict[str, object] = {}
 
-    def _fake_import_csv(_session: object, request: object) -> object:
+    def _fake_import_csv(_scope: object, request: object) -> object:
         captured["sign"] = request.amount_sign  # type: ignore[attr-defined]
         raise ValidationError("stop here; the request is what we are testing")
 
     monkeypatch.setattr("transactions.import_csv", _fake_import_csv)
+    monkeypatch.setattr("transactions._scope_for", _fake_scope)
     monkeypatch.setattr("transactions.get_engine", lambda: None)
     monkeypatch.setattr("transactions.Session", lambda _engine: _NullSession())
 
@@ -306,6 +352,7 @@ def test_commit_passes_the_sign_convention_through(
         [
             "commit",
             str(_file(tmp_path)),
+            USER,
             "--account=checking",
             "--mode=snapshot",
             "--from=2026-08-01",
@@ -323,11 +370,12 @@ def test_commit_defaults_to_no_sign_override(
 ) -> None:
     captured: dict[str, object] = {}
 
-    def _fake_import_csv(_session: object, request: object) -> object:
+    def _fake_import_csv(_scope: object, request: object) -> object:
         captured["sign"] = request.amount_sign  # type: ignore[attr-defined]
         raise ValidationError("stop here")
 
     monkeypatch.setattr("transactions.import_csv", _fake_import_csv)
+    monkeypatch.setattr("transactions._scope_for", _fake_scope)
     monkeypatch.setattr("transactions.get_engine", lambda: None)
     monkeypatch.setattr("transactions.Session", lambda _engine: _NullSession())
 
@@ -335,6 +383,7 @@ def test_commit_defaults_to_no_sign_override(
         [
             "commit",
             str(_file(tmp_path)),
+            USER,
             "--account=checking",
             "--mode=snapshot",
             "--from=2026-08-01",

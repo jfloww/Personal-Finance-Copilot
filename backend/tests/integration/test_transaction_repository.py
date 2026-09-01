@@ -14,8 +14,8 @@ import uuid
 from datetime import date
 
 import pytest
-from sqlalchemy.orm import Session
 
+from offerdelta.application.scope import TenantScope
 from offerdelta.domain.common.errors import ValidationError
 from offerdelta.domain.common.money import Money
 from offerdelta.infrastructure.postgres.repositories import (
@@ -34,8 +34,8 @@ def _account_name(prefix: str) -> str:
     return f"{prefix}-{uuid.uuid4().hex[:8]}"
 
 
-def _account(session: Session, prefix: str = "integration-checking") -> uuid.UUID:
-    return AccountRepository(session).register(_account_name(prefix)).id
+def _account(scope: TenantScope, prefix: str = "integration-checking") -> uuid.UUID:
+    return AccountRepository(scope).register(_account_name(prefix)).id
 
 
 def _record(
@@ -60,15 +60,15 @@ def _record(
     )
 
 
-def test_a_record_round_trips_exactly_with_its_provenance(session: Session) -> None:
-    account_id = _account(session)
+def test_a_record_round_trips_exactly_with_its_provenance(scope: TenantScope) -> None:
+    account_id = _account(scope)
     provenance = Provenance(
         source_file="statement.csv", source_line=2, raw_cells={"Amount": "-4.50"}
     )
     record = _record(account_id, provenance=provenance)
 
-    result = TransactionRepository(session).add_many([record])
-    stored = TransactionRepository(session).get(result.imported_ids[0])
+    result = TransactionRepository(scope).add_many([record])
+    stored = TransactionRepository(scope).get(result.imported_ids[0])
 
     assert stored is not None
     assert stored.amount == Money.parse("-4.50")
@@ -79,11 +79,11 @@ def test_a_record_round_trips_exactly_with_its_provenance(session: Session) -> N
 
 
 def test_a_second_identical_record_is_reported_already_stored_not_written(
-    session: Session,
+    scope: TenantScope,
 ) -> None:
-    account_id = _account(session)
+    account_id = _account(scope)
     record = _record(account_id)
-    repo = TransactionRepository(session)
+    repo = TransactionRepository(scope)
 
     first = repo.add_many([record])
     second = repo.add_many([record])
@@ -94,10 +94,10 @@ def test_a_second_identical_record_is_reported_already_stored_not_written(
     assert repo.count(account_id=account_id) == 1
 
 
-def test_two_accounts_do_not_share_identities(session: Session) -> None:
-    repo = TransactionRepository(session)
-    first_account = _account(session, "account-one")
-    second_account = _account(session, "account-two")
+def test_two_accounts_do_not_share_identities(scope: TenantScope) -> None:
+    repo = TransactionRepository(scope)
+    first_account = _account(scope, "account-one")
+    second_account = _account(scope, "account-two")
 
     # Same date, merchant, and amount in both accounts: without account_id in
     # the fingerprint this would collide and the second import would be
@@ -112,10 +112,16 @@ def test_two_accounts_do_not_share_identities(session: Session) -> None:
     assert repo.count(account_id=second_account) == 1
 
 
-def test_count_is_correct(session: Session) -> None:
-    repo = TransactionRepository(session)
-    account_id = _account(session)
-    other_account = _account(session, "other-account")
+def test_count_is_correct(scope: TenantScope) -> None:
+    """Per account, and summed across the accounts this tenant owns.
+
+    `count()` with no account means "all of mine", not "all of everyone's",
+    so `before_total` is this tenant's baseline; the cross-tenant half of
+    that claim is asserted in `test_tenant_isolation.py`.
+    """
+    repo = TransactionRepository(scope)
+    account_id = _account(scope)
+    other_account = _account(scope, "other-account")
     before_total = repo.count()
 
     repo.add_many(
@@ -131,7 +137,7 @@ def test_count_is_correct(session: Session) -> None:
     assert repo.count() == before_total + 3
 
 
-def test_a_mixed_account_batch_is_refused(session: Session) -> None:
+def test_a_mixed_account_batch_is_refused(scope: TenantScope) -> None:
     """Dedup below is scoped to one account_id.
 
     A batch spanning two accounts would check every record but the first
@@ -139,9 +145,9 @@ def test_a_mixed_account_batch_is_refused(session: Session) -> None:
     duplicates in every account after the first. Refusing up front is the
     fix, not letting that happen and hoping the unique constraint saves us.
     """
-    first_account = _account(session, "account-one")
-    second_account = _account(session, "account-two")
-    repo = TransactionRepository(session)
+    first_account = _account(scope, "account-one")
+    second_account = _account(scope, "account-two")
+    repo = TransactionRepository(scope)
 
     with pytest.raises(ValidationError, match="one account at a time"):
         repo.add_many(
@@ -153,7 +159,7 @@ def test_a_mixed_account_batch_is_refused(session: Session) -> None:
 
 
 def test_a_repeated_external_id_is_reported_already_stored_despite_different_details(
-    session: Session,
+    scope: TenantScope,
 ) -> None:
     """external_id is authoritative for dedup, in both directions.
 
@@ -161,8 +167,8 @@ def test_a_repeated_external_id_is_reported_already_stored_despite_different_det
     would not match it. Only the external_id does, which is the point - the
     bank's own id is trusted over content when both are present.
     """
-    account_id = _account(session)
-    repo = TransactionRepository(session)
+    account_id = _account(scope)
+    repo = TransactionRepository(scope)
     first = repo.add_many([_record(account_id, external_id="bank-ext-1")])
 
     second = repo.add_many(
@@ -184,7 +190,7 @@ def test_a_repeated_external_id_is_reported_already_stored_despite_different_det
 
 
 def test_a_new_external_id_is_written_even_when_content_matches_a_stored_row(
-    session: Session,
+    scope: TenantScope,
 ) -> None:
     """The case that matters most: the bank says it's a different transaction.
 
@@ -198,8 +204,8 @@ def test_a_new_external_id_is_written_even_when_content_matches_a_stored_row(
     of external_id, so two rows can never share all three - confirmed against
     the live database, not assumed.)
     """
-    account_id = _account(session)
-    repo = TransactionRepository(session)
+    account_id = _account(scope)
+    repo = TransactionRepository(scope)
     first = repo.add_many([_record(account_id, occurrence=1, external_id="bank-ext-1")])
 
     second = repo.add_many([_record(account_id, occurrence=2, external_id="bank-ext-2")])
@@ -210,10 +216,10 @@ def test_a_new_external_id_is_written_even_when_content_matches_a_stored_row(
     assert repo.count(account_id=account_id) == 2
 
 
-def test_the_same_external_id_under_a_different_account_is_written(session: Session) -> None:
-    repo = TransactionRepository(session)
-    first_account = _account(session, "account-one")
-    second_account = _account(session, "account-two")
+def test_the_same_external_id_under_a_different_account_is_written(scope: TenantScope) -> None:
+    repo = TransactionRepository(scope)
+    first_account = _account(scope, "account-one")
+    second_account = _account(scope, "account-two")
 
     first = repo.add_many([_record(first_account, external_id="bank-ext-1")])
     second = repo.add_many([_record(second_account, external_id="bank-ext-1")])
@@ -225,9 +231,9 @@ def test_the_same_external_id_under_a_different_account_is_written(session: Sess
     assert repo.count(account_id=second_account) == 1
 
 
-def test_a_mixed_batch_dedupes_each_record_by_its_own_rule(session: Session) -> None:
-    account_id = _account(session)
-    repo = TransactionRepository(session)
+def test_a_mixed_batch_dedupes_each_record_by_its_own_rule(scope: TenantScope) -> None:
+    account_id = _account(scope)
+    repo = TransactionRepository(scope)
 
     repo.add_many(
         [
@@ -257,7 +263,7 @@ def test_a_mixed_batch_dedupes_each_record_by_its_own_rule(session: Session) -> 
 
 
 def test_an_id_less_record_sharing_a_fingerprint_keeps_its_planned_occurrence(
-    session: Session,
+    scope: TenantScope,
 ) -> None:
     """The offset built for an id-carrying record must not leak onto an id-less one.
 
@@ -270,8 +276,8 @@ def test_an_id_less_record_sharing_a_fingerprint_keeps_its_planned_occurrence(
     wrong occurrence, opening a gap: a later, genuinely-new charge could then
     land on the skipped occurrence and be silently written again.
     """
-    account_id = _account(session)
-    repo = TransactionRepository(session)
+    account_id = _account(scope)
+    repo = TransactionRepository(scope)
 
     # Seed occurrence=1 for this fingerprint with no external_id, e.g. a
     # prior snapshot-style row.

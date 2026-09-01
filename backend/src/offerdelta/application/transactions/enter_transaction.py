@@ -24,13 +24,13 @@ from dataclasses import dataclass
 from datetime import date
 
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
 
+from offerdelta.application.scope import TenantScope
 from offerdelta.domain.common.errors import ValidationError
 from offerdelta.domain.common.money import Money
 from offerdelta.domain.transactions.fingerprint import compute_fingerprint
 from offerdelta.domain.transactions.parsing import normalise_description
-from offerdelta.infrastructure.postgres.models import TransactionRow
+from offerdelta.infrastructure.postgres.models import AccountRow, TransactionRow
 from offerdelta.infrastructure.postgres.repositories import (
     AccountRepository,
     TransactionRepository,
@@ -62,13 +62,19 @@ class EntryOutcome:
     already_stored_count: int = 0
 
 
-def enter_transaction(session: Session, entry: ManualEntry) -> EntryOutcome:
-    """Write one hand-entered transaction, or report that it is already there."""
+def enter_transaction(scope: TenantScope, entry: ManualEntry) -> EntryOutcome:
+    """Write one hand-entered transaction, or report that it is already there.
+
+    Takes the tenant rather than a bare session: every account resolved and
+    every row written below belongs to `scope.user`, and there is no argument
+    shape here that could express "somebody else's account".
+    """
+    session = scope.session
     description = entry.description.strip()
     if not description:
         raise ValidationError("a transaction needs a description")
 
-    accounts = AccountRepository(session)
+    accounts = AccountRepository(scope)
     account = accounts.by_key(entry.account_key)
     if account is None:
         known = ", ".join(a.key for a in accounts.all()) or "none registered yet"
@@ -85,9 +91,17 @@ def enter_transaction(session: Session, entry: ManualEntry) -> EntryOutcome:
         amount=entry.amount,
     )
 
+    # The join to `accounts` is redundant given `account` came from a scoped
+    # `AccountRepository` two statements ago - and it is the reason this
+    # statement is safe to read on its own, without tracing where `account`
+    # came from. Every query that touches a tenant's rows names the tenant.
     highest = session.scalars(
-        select(func.max(TransactionRow.occurrence)).where(
+        select(func.max(TransactionRow.occurrence))
+        .select_from(TransactionRow)
+        .join(AccountRow, AccountRow.id == TransactionRow.account_id)
+        .where(
             TransactionRow.account_id == account.id,
+            AccountRow.user_id == scope.user.id,
             TransactionRow.fingerprint == fingerprint,
         )
     ).one()
@@ -114,7 +128,7 @@ def enter_transaction(session: Session, entry: ManualEntry) -> EntryOutcome:
         provenance=None,
     )
 
-    result = TransactionRepository(session).add_many([record])
+    result = TransactionRepository(scope).add_many([record])
     if not result.imported_ids:
         # Only reachable if something was written between the count above and
         # this write. Reporting it beats claiming a row that is not ours.
