@@ -15,19 +15,27 @@ the evaluation benchmark's version of it. The published "a free deterministic
 baseline answers about a fifth of rows" describes a `RuleBaseline` *fitted* on
 real transaction history; this tool builds one unfitted (see `_rule_baseline`
 for why), so on a real run it answers only what its two built-in heuristics
-catch - far below that figure. It also sends every row to the model with
-`account_type="unknown"` (see `_UNKNOWN_ACCOUNT_TYPE`), a value the benchmark
-never scored against, since `accounts` has no such column to read one from.
-The published per-row cost and accuracy figures describe the benchmark's run,
-not this tool's - `_run` prints a caveat to that effect whenever the rule
-tier is unfitted, which today is every time.
+catch - far below that figure. The published per-row cost and accuracy figures
+therefore describe the benchmark's run, not this tool's; `_run` prints a caveat
+to that effect whenever the rule tier is unfitted, which today is every time.
+
+The `account_type` this sends is *not* one of those differences, though an
+earlier version of this docstring claimed it was. The frozen benchmark's CSV
+carries no `account_type` column at all - `build_eval_subset.COLUMNS` does not
+write one - so `evaluation.csv_loader` gave all 400 of its rows the same
+`"unknown"` this tool sends. See `_UNKNOWN_ACCOUNT_TYPE`.
+
+Writing is chunked rather than done in one transaction at the end: the model is
+asked about `_CHUNK_ROWS` rows, those answers are committed, and only then does
+the next chunk start. See `_CHUNK_ROWS` for why a run being non-atomic is the
+point rather than a compromise.
 """
 
 from __future__ import annotations
 
 import argparse
 import sys
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Final
@@ -58,11 +66,20 @@ from offerdelta.infrastructure.postgres.repositories import (
 _COST_PER_ROW_USD: Final = Decimal("0.001913")
 
 #: `StoredTransaction` carries no account type: `accounts` has no such column
-#: (see `AccountRow` in `infrastructure.postgres.models`), and adding one is
-#: outside this tool's scope. Every categoriser needs *some* value for
-#: `TransactionView.account_type`, so every row gets the same placeholder
-#: `evaluation.csv_loader` already uses for a missing account_type field,
-#: rather than inventing a second convention for the same absence.
+#: (see `AccountRow` in `infrastructure.postgres.models`). Every categoriser
+#: needs *some* value for `TransactionView.account_type`, so every row gets the
+#: same placeholder `evaluation.csv_loader` already uses for a missing
+#: account_type field, rather than inventing a second convention for the same
+#: absence.
+#:
+#: That placeholder is also exactly what the frozen benchmark scored: its CSV
+#: has no `account_type` column either (`build_eval_subset.COLUMNS` writes
+#: none), so every one of its 400 rows reached the model as `"unknown"` too.
+#: On this axis the deployed input matches what was measured. Giving
+#: `accounts` a real account type would move this tool *away* from the scored
+#: distribution, and the benchmark holds no account types to re-measure
+#: against - so that is a measured decision with a cost, not the small
+#: correction it looks like.
 _UNKNOWN_ACCOUNT_TYPE: Final = "unknown"
 
 #: Strictly above the highest confidence `Prediction` allows (`0 <= confidence
@@ -75,6 +92,26 @@ _UNKNOWN_ACCOUNT_TYPE: Final = "unknown"
 #: `confirmed_label` already settles what that row reports, so touching
 #: `suggested_label` again could not change anything downstream.
 _RECLASSIFY_THRESHOLD: Final = Decimal("1.001")
+
+
+#: How many rows the model is asked about between commits.
+#:
+#: A run over real history spends minutes inside `predict_many`. Holding one
+#: transaction open across all of it keeps a connection checked out for the
+#: whole run, which is precisely the case `pool_pre_ping` cannot cover: it
+#: validates a connection at *checkout*, so a pooler dropping the idle
+#: connection mid-run surfaces as a failure at the next statement rather than
+#: being replaced. Committing between chunks hands the connection back to the
+#: pool before each model call, so every chunk's first write checks a fresh one
+#: out.
+#:
+#: The price is that a run is no longer one transaction. That is deliberate
+#: here and would be wrong elsewhere: classification rows are independent, and
+#: `unclassified()` skips whatever already carries a suggestion, so re-running
+#: the command *is* resume, and the answers already paid for survive a failure.
+#: `seed_demo.py` keeps its single commit for the opposite reason - a
+#: half-seeded demo is a broken one.
+_CHUNK_ROWS: Final = 50
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -244,6 +281,12 @@ def _record(
         )
 
 
+def _chunks(rows: Sequence[StoredTransaction], size: int) -> Iterator[Sequence[StoredTransaction]]:
+    """Successive slices of `rows`, the last one short."""
+    for start in range(0, len(rows), size):
+        yield rows[start : start + size]
+
+
 def _rows_to_classify(
     repo: TransactionRepository, args: argparse.Namespace
 ) -> list[StoredTransaction]:
@@ -319,29 +362,39 @@ def _run(args: argparse.Namespace) -> int:
 
         # Past the gate: now it is safe to write, starting with the rule
         # tier's own free answers, which were held back until this point too.
+        # Committing them here rather than at the end is what leaves no
+        # transaction open across the first model call.
         _record(repo, rule_answers, source="rules", by=rules.name)
-
-        model_answers: list[_Answered] = []
-        still_unanswered: list[_Answered] = []
-        if remaining:
-            llm = _llm_categoriser()
-            still_unanswered, model_answers = _split(
-                remaining, llm.predict_many([_view(r) for r in remaining])
-            )
-            _record(repo, model_answers, source="llm", by=llm.name)
-            # The model is the last tier: an abstention here is recorded too,
-            # not merely printed, so `unclassified()` stops handing this row
-            # back out every run and `awaiting_review()` can surface it as
-            # "examined, no answer" instead of "nobody has looked yet" - the
-            # property Fix 2 exists for. `Prediction.abstain`'s label is
-            # already `"UNKNOWN"`, so `_record` needs no special case for it.
-            _record(repo, still_unanswered, source="llm", by=llm.name)
-
         scope.session.commit()
 
+        answered = 0
+        abstained = 0
+        if remaining:
+            llm = _llm_categoriser()
+            for chunk in _chunks(remaining, _CHUNK_ROWS):
+                chunk_abstained, chunk_answers = _split(
+                    chunk, llm.predict_many([_view(r) for r in chunk])
+                )
+                _record(repo, chunk_answers, source="llm", by=llm.name)
+                # The model is the last tier: an abstention here is recorded
+                # too, not merely printed, so `unclassified()` stops handing
+                # this row back out every run and `awaiting_review()` can
+                # surface it as "examined, no answer" instead of "nobody has
+                # looked yet" - the property Fix 2 exists for.
+                # `Prediction.abstain`'s label is already `"UNKNOWN"`, so
+                # `_record` needs no special case for it.
+                _record(repo, chunk_abstained, source="llm", by=llm.name)
+                scope.session.commit()
+
+                answered += len(chunk_answers)
+                abstained += len(chunk_abstained)
+                # Printed after the commit, so the last line a failed run
+                # leaves behind names what is actually on disk - which is all
+                # a resume needs, since re-running skips exactly those rows.
+                print(f"  committed {answered + abstained} / {len(remaining)}")
+
         print(
-            f"rules answered {len(rule_answers)}, model answered {len(model_answers)}, "
-            f"abstained {len(still_unanswered)}"
+            f"rules answered {len(rule_answers)}, model answered {answered}, abstained {abstained}"
         )
         return 0
     finally:

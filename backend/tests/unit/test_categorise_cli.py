@@ -78,9 +78,38 @@ class _NullSession:
         return None
 
 
-def _fake_scope() -> TenantScope:
+class _RecordingSession:
+    """`_NullSession`, but it appends each commit into a shared log.
+
+    Chunked commits are only worth anything if each one lands *after* that
+    chunk's writes and *before* the next chunk's model call, so this writes
+    into the same list the fake repository's `record_suggestion` writes to -
+    a commit *count* cannot tell "commit per chunk" apart from "every write,
+    then three commits at the end", which is the defect being fixed.
+
+    `fail_on` makes the nth commit raise, standing in for the pooler dropping
+    a connection partway through a long run.
+    """
+
+    def __init__(self, log: list[str], *, fail_on: int | None = None) -> None:
+        self._log = log
+        self._fail_on = fail_on
+        self.commits = 0
+
+    def commit(self) -> None:
+        self.commits += 1
+        if self.commits == self._fail_on:
+            raise SQLAlchemyError("connection closed by the pooler")
+        # Only a commit that returned is logged: one that raised did not land.
+        self._log.append("commit")
+
+    def close(self) -> None:
+        return None
+
+
+def _fake_scope(session: object | None = None) -> TenantScope:
     return TenantScope(
-        session=cast(Session, _NullSession()),
+        session=cast(Session, session if session is not None else _NullSession()),
         user=AuthenticatedUser(id=uuid.uuid4(), email="a@example.test"),
     )
 
@@ -293,6 +322,123 @@ def test_an_abstained_row_is_not_resent_to_the_model_on_a_later_run(
     assert second == 0
     assert suggested[row.id] == "UNKNOWN"
     assert asked_of_model == [row.id], "the second run must not re-send the abstained row"
+
+
+# ---------------------------------------------------------------- chunked commits
+
+
+class _ChunkFixture:
+    """Five uniquely named rows, none of which the rule tier can answer.
+
+    `_row`'s defaults - a negative amount and a description carrying no
+    transfer keyword - are what make them unanswerable, so all five reach the
+    model and the chunk boundaries are the only thing splitting them.
+    """
+
+    def __init__(self) -> None:
+        self.rows = [_row(f"MERCHANT {i}") for i in range(5)]
+        self.merchants = {row.id: row.normalised_merchant for row in self.rows}
+        self.log: list[str] = []
+        self.asked_sizes: list[int] = []
+
+    def repository(self) -> type:
+        rows, merchants, log = self.rows, self.merchants, self.log
+
+        class _FakeRepo:
+            def __init__(self, _scope: object) -> None:
+                pass
+
+            def unclassified(self, limit: int | None = None) -> list[StoredTransaction]:  # noqa: ARG002
+                return rows
+
+            def record_suggestion(self, transaction_id: uuid.UUID, **_kw: object) -> None:
+                log.append(merchants[transaction_id])
+
+        return _FakeRepo
+
+    def llm(self) -> type:
+        asked_sizes = self.asked_sizes
+
+        class _FakeLLM:
+            name = "fake-llm:v1"
+
+            def predict_many(self, views: list[object]) -> list[object]:
+                asked_sizes.append(len(views))
+                return [_prediction("LIVING_OTHER", "0.9") for _ in views]
+
+        return _FakeLLM
+
+    def install(self, monkeypatch: pytest.MonkeyPatch, session: object) -> None:
+        monkeypatch.setattr(categorise, "_CHUNK_ROWS", 2)
+        monkeypatch.setattr(categorise, "TransactionRepository", self.repository())
+        monkeypatch.setattr(categorise, "_llm_categoriser", self.llm())
+        monkeypatch.setattr(categorise, "_open_scope", lambda _email: _fake_scope(session))
+
+
+def test_the_model_is_asked_in_chunks_and_each_chunk_is_committed(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A long run must not hold one transaction open across every model call.
+
+    That is what made a full run over real history fail: the connection stayed
+    checked out from the first write through to the single commit at the end,
+    which is exactly when `pool_pre_ping` cannot help - it validates a
+    connection at *checkout*, so a pooler dropping the idle connection mid-run
+    surfaced as a failure at the next statement instead. Committing between
+    chunks returns the connection to the pool before each model call.
+
+    The expected log is asserted in full rather than as a count: it pins the
+    interleaving, and it pins that every row is written exactly once, so a
+    chunk boundary can neither drop a row nor write one twice.
+    """
+    fixture = _ChunkFixture()
+    fixture.install(monkeypatch, _RecordingSession(fixture.log))
+
+    exit_code = categorise.main(["--user", "a@example.test", "--yes"])
+
+    capsys.readouterr()
+    assert exit_code == 0
+    assert fixture.asked_sizes == [2, 2, 1], "the model is asked per chunk, not once per run"
+    assert fixture.log == [
+        # The rule tier answers none of these five, so its commit carries
+        # nothing - but it still separates the gate from the first model call.
+        "commit",
+        "MERCHANT 0",
+        "MERCHANT 1",
+        "commit",
+        "MERCHANT 2",
+        "MERCHANT 3",
+        "commit",
+        "MERCHANT 4",
+        "commit",
+    ]
+
+
+def test_a_failed_commit_keeps_the_chunks_already_committed(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Whole-run atomicity is given up deliberately; this is what it buys.
+
+    Classification rows are independent and `unclassified()` skips what
+    already carries a suggestion, so a run that dies partway is resumed by
+    running it again - and the model answers already paid for are on disk
+    rather than discarded. The failure must also stop the run: nothing is
+    spent on chunks after the one that could not be written.
+    """
+    fixture = _ChunkFixture()
+    # The rule tier's commit is the first, so the third is the second chunk's.
+    fixture.install(monkeypatch, _RecordingSession(fixture.log, fail_on=3))
+
+    exit_code = categorise.main(["--user", "a@example.test", "--yes"])
+
+    out = capsys.readouterr().out
+    assert exit_code == 1
+    assert out.startswith("note:")
+    assert "database error while reaching" in out
+    assert fixture.log.count("commit") == 2, "the first chunk's commit stands"
+    assert fixture.log[:4] == ["commit", "MERCHANT 0", "MERCHANT 1", "commit"]
+    assert fixture.asked_sizes == [2, 2], "the run stops rather than paying for a third chunk"
+    assert "MERCHANT 4" not in fixture.log
 
 
 # ---------------------------------------------------------------- error handling
