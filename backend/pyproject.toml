@@ -69,7 +69,7 @@ ignore = [
 [tool.ruff.lint.isort]
 # `tests` is our own code, so it sorts with `offerdelta` rather than being
 # mistaken for a third-party package.
-known-first-party = ["offerdelta", "tests", "annotate", "categorise", "seed_demo", "sweep_threshold", "transactions", "users"]
+known-first-party = ["offerdelta", "tests", "annotate", "categorise", "review", "seed_demo", "sweep_threshold", "transactions", "users"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = [
@@ -85,7 +85,7 @@ strict = true
 warn_unreachable = true
 disallow_any_explicit = true
 plugins = ["pydantic.mypy"]
-files = ["src", "tests", "analyse_failures.py", "annotate.py", "build_eval_subset.py", "build_public_results.py", "categorise.py", "llm_smoke.py", "run_evaluation.py", "seed_demo.py", "sweep_threshold.py", "transactions.py", "users.py", "validate_dataset.py"]
+files = ["src", "tests", "analyse_failures.py", "annotate.py", "build_eval_subset.py", "build_public_results.py", "categorise.py", "llm_smoke.py", "review.py", "run_evaluation.py", "seed_demo.py", "sweep_threshold.py", "transactions.py", "users.py", "validate_dataset.py"]
 
 # Pydantic's BaseModel and BaseSettings carry explicit Any in their own
 # signatures, and a wire or environment boundary deals in untyped input by
