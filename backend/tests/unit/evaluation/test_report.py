@@ -12,6 +12,7 @@ numbers worth anything:
 """
 
 import contextlib
+from collections.abc import Sequence
 from datetime import date
 from decimal import Decimal
 
@@ -19,6 +20,7 @@ import pytest
 
 from offerdelta.domain.common.errors import ValidationError
 from offerdelta.domain.common.money import Money
+from offerdelta.domain.transactions.view import TransactionView
 from offerdelta.evaluation.categorisers import Prediction
 from offerdelta.evaluation.dataset import LabelledDataset, LabelledTransaction
 from offerdelta.evaluation.llm_categoriser import HybridCategoriser, LLMCategoriser
@@ -92,17 +94,60 @@ class _Always:
 
 
 class _Mutator:
-    """A badly behaved system that tries to rewrite the labels it is scored on."""
+    """A deliberately manufactured attack on the checksum mechanism itself.
+
+    It reaches the dataset's own records through a constructor argument -
+    something no real `EvaluatableSystem` in this codebase has: not
+    `RuleBaseline`, not `LLMCategoriser`, not `HybridCategoriser`. That door is
+    shut by construction. `predict_many` now only ever receives a
+    freshly-built, detached `TransactionView`, so a system limited to that
+    argument has nothing to write back into the dataset -
+    `test_a_view_mutation_attempt_cannot_reach_the_record` below proves that
+    without any side channel.
+
+    This class exists for a narrower purpose: to prove the checksum
+    comparison in `evaluate()` still catches a corrupted record if one ever
+    arrived some other way - a future bug, a different call path, anything
+    holding a reference this test's construction gives it on purpose. It
+    guards the mechanism, not a live attack surface.
+    """
+
+    def __init__(self, records: tuple[LabelledTransaction, ...]) -> None:
+        self._records = records
 
     @property
     def name(self) -> str:
         return "mutator"
 
-    def predict_many(self, records):  # type: ignore[no-untyped-def]
-        for record in records:
+    def predict_many(self, views):  # type: ignore[no-untyped-def]
+        for record in self._records:
             with contextlib.suppress(Exception):
                 object.__setattr__(record, "primary_label", GROCERY)
-        return [Prediction(label=GROCERY, confidence=Decimal("1"), reason="fixed") for _ in records]
+        return [Prediction(label=GROCERY, confidence=Decimal("1"), reason="fixed") for _ in views]
+
+
+class _ViewMutator:
+    """Shaped exactly like a real `EvaluatableSystem` - no constructor
+    argument, no reference to the dataset smuggled in any other way - that
+    still tries to rewrite whatever `predict_many` hands it.
+
+    This is the only door an actual categoriser has. Unlike `_Mutator` above,
+    it needs no special access, because there no longer is any to give it.
+    """
+
+    def __init__(self) -> None:
+        self.seen: list[TransactionView] = []
+
+    @property
+    def name(self) -> str:
+        return "view-mutator"
+
+    def predict_many(self, views: Sequence[TransactionView]) -> list[Prediction]:
+        self.seen.extend(views)
+        for view in views:
+            with contextlib.suppress(Exception):
+                object.__setattr__(view, "normalised_merchant", "HACKED")
+        return [Prediction(label=GROCERY, confidence=Decimal("1"), reason="fixed") for _ in views]
 
 
 class _Short:
@@ -125,7 +170,26 @@ def test_a_system_that_mutates_the_dataset_is_caught() -> None:
     # The guarantee the whole report rests on. Frozen dataclasses make this
     # unlikely; checking the checksum makes it provable.
     with pytest.raises(ValidationError, match="changed during evaluation"):
-        evaluate(HOLDOUT, [_Mutator()])
+        evaluate(HOLDOUT, [_Mutator(HOLDOUT.records)])
+
+
+def test_a_view_mutation_attempt_cannot_reach_the_record() -> None:
+    """The primary defence, proved without a side channel: a view handed to a
+    real categoriser is not the record it was built from, and mutating one
+    cannot touch the other. True by construction - there is nothing here for
+    a checksum to catch."""
+    mutator = _ViewMutator()
+    before = HOLDOUT.checksum
+
+    evaluate(HOLDOUT, [mutator])
+
+    for view, record in zip(mutator.seen, HOLDOUT.records, strict=True):
+        # mypy already proves this from the two classes' declared types; the
+        # runtime check stays as a guard against a `.view` implementation
+        # that broke that guarantee by returning something aliased.
+        assert view is not record  # type: ignore[comparison-overlap]
+    assert HOLDOUT.checksum == before
+    assert HOLDOUT.records[0].normalised_merchant == "BLUE BOTTLE"
 
 
 def test_the_report_records_the_checksum_it_ran_against() -> None:

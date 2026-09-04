@@ -33,6 +33,7 @@ from typing import Final
 
 from offerdelta.domain.common.errors import ValidationError
 from offerdelta.domain.common.money import Money
+from offerdelta.domain.transactions.view import TransactionView
 from offerdelta.evaluation.labels import LABEL_SPACE
 
 #: Bumped when the record shape changes. A stored result names the schema that
@@ -120,6 +121,16 @@ class LabelledTransaction:
     def gold_label(self) -> str:
         """The label to score against: adjudicated where one exists."""
         return self.adjudicated_label or self.primary_label
+
+    @property
+    def view(self) -> TransactionView:
+        """What a categoriser sees. Never the label."""
+        return TransactionView(
+            normalised_merchant=self.normalised_merchant,
+            raw_description=self.raw_description,
+            amount=self.amount,
+            account_type=self.account_type,
+        )
 
     @property
     def has_second_annotation(self) -> bool:

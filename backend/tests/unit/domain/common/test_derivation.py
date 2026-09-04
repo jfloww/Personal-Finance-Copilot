@@ -11,11 +11,11 @@ check the engine will enforce in milestone 3.
 
 import pytest
 
+from offerdelta.domain.common.derivation import DerivationNode, _weakest
 from offerdelta.domain.common.errors import ValidationError
 from offerdelta.domain.common.evidence import Evidence
 from offerdelta.domain.common.money import Money
 from offerdelta.domain.common.periods import PeriodKind
-from offerdelta.domain.comparisons.derivation import DerivationNode
 
 
 def _leaf(code: str, amount: str) -> DerivationNode:
@@ -125,3 +125,20 @@ def test_is_immutable() -> None:
     node = _leaf("rent", "-1800.00")
     with pytest.raises(AttributeError):
         node.amount = Money.zero()  # type: ignore[misc]
+
+
+def test_weakest_of_no_children_is_assumed_not_sourced() -> None:
+    """A childless branch has no child evidence to be weakest of.
+
+    `SOURCED` - "taken from a versioned public dataset" - is the strongest
+    claim `Evidence` can make, not a safe default for "nothing to go on"; a
+    fully-reviewed month's empty branches, and an empty month's whole root,
+    would otherwise claim data provenance they do not have - the property
+    Fix 7 exists for.
+    """
+    assert _weakest([]) is Evidence.ASSUMED
+
+
+def test_weakest_of_only_sourced_children_is_still_sourced() -> None:
+    """The empty-list default must not swallow a real, non-empty case."""
+    assert _weakest([Evidence.SOURCED, Evidence.SOURCED]) is Evidence.SOURCED

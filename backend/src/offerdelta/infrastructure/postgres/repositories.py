@@ -13,9 +13,11 @@ import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
+from decimal import Decimal
+from typing import Final
 
 from argon2.exceptions import InvalidHashError
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -30,6 +32,7 @@ from offerdelta.domain.transactions.fingerprint import (
     compute_fingerprint,
 )
 from offerdelta.domain.users.identity import normalise_email
+from offerdelta.evaluation.labels import ABSTAIN, LABEL_SPACE
 from offerdelta.infrastructure.auth.passwords import hash_password, verify_password
 from offerdelta.infrastructure.postgres.models import (
     AccountRow,
@@ -105,6 +108,23 @@ class StoredTransaction:
     source_file: str | None
     source_line: int | None
     raw_cells: dict[str, str] | None
+
+    #: What a categoriser proposed, and who or what proposed it. NULL means
+    #: never examined; the literal 'UNKNOWN' means examined and declined -
+    #: see `TransactionRow` for why those are not the same fact.
+    suggested_label: str | None
+    suggested_source: str | None
+    suggested_confidence: Decimal | None
+    suggested_by: str | None
+
+    #: A person's decision. Outranks `suggested_label` structurally, via
+    #: `effective_label`, rather than by a caller remembering to check it.
+    confirmed_label: str | None
+
+    @property
+    def effective_label(self) -> str | None:
+        """The label a report should use: a person's word over a model's guess."""
+        return self.confirmed_label or self.suggested_label
 
 
 @dataclass(frozen=True)
@@ -314,6 +334,40 @@ class _ScopedRepository:
         ).one_or_none()
         if owned is None:
             raise ValidationError(f"no batch {batch_id}")
+
+    def _require_own_transaction(self, transaction_id: uuid.UUID) -> TransactionRow:
+        """A transaction id from a caller is only usable if this tenant owns it.
+
+        Mirrors `_require_own_account` exactly, for the same reason:
+        `record_suggestion` and `confirm_label` both write onto a row named
+        by an id from outside this repository, and a primary key alone
+        answers for any tenant's row, not just this one's. Without this, an
+        id that reached a route from a request body could confirm a label
+        onto - or read the provenance of - somebody else's transaction.
+
+        Returns the row itself, fetched through this tenant-filtered query,
+        rather than just confirming it exists. A caller that mutates it
+        afterward then never needs a second, unscoped `session.get` by bare
+        primary key - which would only be safe again by chain-of-custody
+        reasoning ("nothing runs between the check and the fetch"), the
+        exact argument this whole layer refuses to rest on.
+
+        Deliberately the same message for "no such transaction" and
+        "somebody else's transaction", for the same reason
+        `_require_own_account` gives: telling the caller which one it is
+        confirms the existence of a row they are not allowed to see.
+        """
+        owned = self._session.scalars(
+            select(TransactionRow)
+            .join(AccountRow, AccountRow.id == TransactionRow.account_id)
+            .where(
+                TransactionRow.id == transaction_id,
+                AccountRow.user_id == self._user_id,
+            )
+        ).one_or_none()
+        if owned is None:
+            raise ValidationError(f"no transaction {transaction_id}")
+        return owned
 
 
 class AccountRepository(_ScopedRepository):
@@ -733,6 +787,167 @@ class TransactionRepository(_ScopedRepository):
             statement = statement.where(TransactionRow.account_id == account_id)
         return self._session.scalars(statement).one()
 
+    def unclassified(self, limit: int | None = None) -> list[StoredTransaction]:
+        """Rows a categoriser has never looked at - not rows it declined.
+
+        Filters on ``suggested_label IS NULL`` alone. A row a categoriser
+        already examined and abstained on carries ``suggested_label =
+        'UNKNOWN'``, which is a different fact - "looked and declined" - and
+        belongs in `awaiting_review`, not back in a queue meant for rows
+        nobody has run a model over yet. Collapsing the two here would mean
+        an abstained row gets re-classified every run forever, which is the
+        opposite of what abstention is for.
+        """
+        statement = (
+            select(TransactionRow)
+            .join(AccountRow, AccountRow.id == TransactionRow.account_id)
+            .where(
+                AccountRow.user_id == self._user_id,
+                TransactionRow.suggested_label.is_(None),
+            )
+            .order_by(TransactionRow.posted_on, TransactionRow.id)
+        )
+        if limit is not None:
+            statement = statement.limit(limit)
+        rows = self._session.scalars(statement).all()
+        return [_to_stored_transaction(row) for row in rows]
+
+    def record_suggestion(
+        self,
+        transaction_id: uuid.UUID,
+        *,
+        label: str,
+        source: str,
+        confidence: Decimal,
+        by: str,
+        now: datetime | None = None,
+    ) -> None:
+        """Write a categoriser's guess, without ever touching a person's decision.
+
+        `transaction_id` arrives from a caller, so ownership is checked first
+        via `_require_own_transaction` - the same reason every other method
+        here that takes a bare id checks it before writing or reading through
+        it.
+
+        Re-classification calls this freely, including over a row a person
+        already confirmed: `confirmed_label` is a separate column that only
+        `confirm_label` ever writes, so overwriting `suggested_label` here
+        can never erase a confirmation. That is what makes "a person's
+        decision survives re-classification" structural rather than a rule
+        every caller has to remember.
+        """
+        row = self._require_own_transaction(transaction_id)
+        self._require_label(label)
+        row.suggested_label = label
+        row.suggested_source = source
+        row.suggested_confidence = confidence
+        row.suggested_by = by
+        row.suggested_at = now or datetime.now(UTC)
+        self._session.flush()
+
+    def confirm_label(
+        self, transaction_id: uuid.UUID, label: str, *, now: datetime | None = None
+    ) -> None:
+        """Record a person's decision. Never writes `suggested_label`.
+
+        `transaction_id` arrives from a caller, so ownership is checked
+        first via `_require_own_transaction`, exactly as in
+        `record_suggestion`.
+
+        Writing only `confirmed_label` (never `suggested_label`) is what
+        lets `record_suggestion` be called again later, by a later
+        re-classification run, without a caller on either side having to
+        coordinate to protect this row - see `record_suggestion`.
+        """
+        row = self._require_own_transaction(transaction_id)
+        self._require_label(label)
+        row.confirmed_label = label
+        row.confirmed_at = now or datetime.now(UTC)
+        self._session.flush()
+
+    def for_month(self, year: int, month: int) -> list[StoredTransaction]:
+        """This tenant's transactions posted in one calendar month."""
+        start, end = _month_bounds(year, month)
+        rows = self._session.scalars(
+            select(TransactionRow)
+            .join(AccountRow, AccountRow.id == TransactionRow.account_id)
+            .where(
+                AccountRow.user_id == self._user_id,
+                TransactionRow.posted_on >= start,
+                TransactionRow.posted_on < end,
+            )
+            .order_by(TransactionRow.posted_on, TransactionRow.id)
+        ).all()
+        return [_to_stored_transaction(row) for row in rows]
+
+    def awaiting_review(
+        self, threshold: Decimal, *, month: tuple[int, int] | None = None
+    ) -> list[StoredTransaction]:
+        """Rows nobody has confirmed and no categoriser confidently resolved.
+
+        A row belongs here when `confirmed_label IS NULL` - a person's
+        decision always takes a row out of the queue, see `confirm_label` -
+        and, on the suggestion side, any of three separate facts hold:
+        never examined (`suggested_label IS NULL`), examined and declined
+        (`suggested_label = 'UNKNOWN'`), or examined and unsure
+        (`suggested_confidence < threshold`). These are kept as an `OR`
+        rather than folded into one condition because a report built on top
+        of this (a later task) shows them as distinct leaves - collapsing
+        them here would throw away the distinction before it ever reaches
+        that report.
+
+        Ordered by `posted_on` descending: the most recent uncertain
+        spending is what a person reviewing the queue wants to see first.
+        `id` breaks ties on the same date, as `unclassified` and `for_month`
+        already do - without it, two rows sharing a date could come back in
+        either order on different calls, and a person paging through the
+        queue could see one row twice and never see the other.
+        """
+        conditions = [
+            AccountRow.user_id == self._user_id,
+            TransactionRow.confirmed_label.is_(None),
+            or_(
+                TransactionRow.suggested_label.is_(None),
+                TransactionRow.suggested_label == ABSTAIN,
+                TransactionRow.suggested_confidence < threshold,
+            ),
+        ]
+        if month is not None:
+            year, mon = month
+            start, end = _month_bounds(year, mon)
+            conditions.append(TransactionRow.posted_on >= start)
+            conditions.append(TransactionRow.posted_on < end)
+        rows = self._session.scalars(
+            select(TransactionRow)
+            .join(AccountRow, AccountRow.id == TransactionRow.account_id)
+            .where(*conditions)
+            .order_by(TransactionRow.posted_on.desc(), TransactionRow.id)
+        ).all()
+        return [_to_stored_transaction(row) for row in rows]
+
+    @staticmethod
+    def _require_label(label: str) -> None:
+        """A label a categoriser or a person supplies must be one the taxonomy knows.
+
+        Guards against a typo or a stale model output writing a string into
+        `suggested_label` or `confirmed_label` that no report downstream
+        (grouped by `CostCategory`, see `offerdelta.evaluation.labels`) can
+        ever match - a silently unreportable row rather than a loud failure
+        at the point the bad label was about to be stored.
+        """
+        if label not in LABEL_SPACE:
+            raise ValidationError(f"{label!r} is not a label in this taxonomy")
+
+
+_DECEMBER: Final = 12
+
+
+def _month_bounds(year: int, month: int) -> tuple[date, date]:
+    """The half-open `[start, end)` range of calendar dates for one month."""
+    start = date(year, month, 1)
+    end = date(year + 1, 1, 1) if month == _DECEMBER else date(year, month + 1, 1)
+    return start, end
+
 
 def _to_stored(row: ComparisonRunRow) -> StoredRun:
     return StoredRun(
@@ -767,6 +982,11 @@ def _to_stored_transaction(row: TransactionRow) -> StoredTransaction:
         source_file=row.source_file,
         source_line=row.source_line,
         raw_cells=dict(row.raw_cells) if row.raw_cells is not None else None,
+        suggested_label=row.suggested_label,
+        suggested_source=row.suggested_source,
+        suggested_confidence=row.suggested_confidence,
+        suggested_by=row.suggested_by,
+        confirmed_label=row.confirmed_label,
     )
 
 

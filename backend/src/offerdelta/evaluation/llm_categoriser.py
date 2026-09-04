@@ -27,8 +27,8 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Final
 
+from offerdelta.domain.transactions.view import TransactionView
 from offerdelta.evaluation.categorisers import Prediction
-from offerdelta.evaluation.dataset import LabelledTransaction
 from offerdelta.evaluation.labels import LABEL_SPACE
 from offerdelta.evaluation.providers import LLMProvider, LLMRequest
 from offerdelta.evaluation.rule_baseline import RuleBaseline
@@ -61,12 +61,12 @@ class LLMCategoriser:
     def calls(self) -> int:
         return len(self.latencies_ms)
 
-    def predict(self, record: LabelledTransaction) -> Prediction:
+    def predict(self, view: TransactionView) -> Prediction:
         request = LLMRequest(
-            merchant=record.normalised_merchant,
-            raw_description=record.raw_description,
-            amount=str(record.amount.amount),
-            account_type=record.account_type,
+            merchant=view.normalised_merchant,
+            raw_description=view.raw_description,
+            amount=str(view.amount.amount),
+            account_type=view.account_type,
             allowed_labels=_ALLOWED,
         )
 
@@ -98,8 +98,8 @@ class LLMCategoriser:
             reason=response.reason or "model provided no reason",
         )
 
-    def predict_many(self, records: Sequence[LabelledTransaction]) -> list[Prediction]:
-        return [self.predict(record) for record in records]
+    def predict_many(self, views: Sequence[TransactionView]) -> list[Prediction]:
+        return [self.predict(view) for view in views]
 
     def usage(self) -> Usage:
         """What this run cost, in the report's vocabulary rather than a provider's."""
@@ -140,15 +140,15 @@ class HybridCategoriser:
             return Decimal(0)
         return Decimal(self.escalations) / Decimal(total)
 
-    def predict(self, record: LabelledTransaction) -> Prediction:
-        rule = self.rules.predict(record)
+    def predict(self, view: TransactionView) -> Prediction:
+        rule = self.rules.predict(view)
 
         if not rule.abstained and rule.confidence >= self.threshold:
             self.rule_answers += 1
             return rule
 
         self.escalations += 1
-        model = self.llm.predict(record)
+        model = self.llm.predict(view)
 
         if model.abstained:
             # The model declined or failed. A confident-enough rule is better
@@ -167,8 +167,8 @@ class HybridCategoriser:
             reason=f"escalated to model: {model.reason}",
         )
 
-    def predict_many(self, records: Sequence[LabelledTransaction]) -> list[Prediction]:
-        return [self.predict(record) for record in records]
+    def predict_many(self, views: Sequence[TransactionView]) -> list[Prediction]:
+        return [self.predict(view) for view in views]
 
     def usage(self) -> Usage:
         """The hybrid's cost is exactly the model calls it chose to make.

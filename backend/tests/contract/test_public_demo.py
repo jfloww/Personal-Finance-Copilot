@@ -326,3 +326,51 @@ def test_the_public_schema_advertises_the_evaluation_endpoint(client: TestClient
         # this file pins its presence, and `_AUTH_CONFIGURED` is exactly the
         # constant deciding whether `/v1/auth/token` is advertised at all.
         assert "/v1/auth/token" in schema["paths"]
+    if main._DATABASE_CONFIGURED:
+        # The report and review routes hide with the rest of the transaction
+        # surface on a deployment with no database - `_DATABASE_CONFIGURED`
+        # is exactly the constant every one of their `include_in_schema`
+        # arguments reads, the same relationship `/v1/auth/token` has to
+        # `_AUTH_CONFIGURED` above.
+        assert "/v1/reports/months" in schema["paths"]
+        assert "/v1/reports/monthly/{month}" in schema["paths"]
+        assert "/v1/review-queue" in schema["paths"]
+        assert "/v1/transactions/{transaction_id}/label" in schema["paths"]
+
+
+#: The four report and review routes Task 9 adds, each paired with a request
+#: that FastAPI can route without a 404 or a body-shape 422 masking the 401
+#: `_scope` is supposed to raise first - a syntactically valid month and a
+#: syntactically valid (but nonexistent) transaction id, and a body that
+#: would satisfy `LabelConfirmationSchema` if it were ever read.
+_NEW_TENANT_ROUTES: Final = (
+    ("GET", "/v1/reports/months", None),
+    ("GET", "/v1/reports/monthly/2026-01", None),
+    ("GET", "/v1/review-queue", None),
+    (
+        "POST",
+        "/v1/transactions/00000000-0000-0000-0000-000000000000/label",
+        {"label": "LIVING_DINING"},
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "body"),
+    _NEW_TENANT_ROUTES,
+    ids=[f"{m} {p}" for m, p, _ in _NEW_TENANT_ROUTES],
+)
+def test_every_new_report_and_review_route_requires_authentication(
+    client: TestClient, method: str, path: str, body: dict[str, str] | None
+) -> None:
+    """No new unauthenticated route: the public deployment now carries a real
+    database (Phase 0's §6), so every one of these four is reachable, and
+    `_scope` - not a hidden route or a missing table - is the only thing
+    standing between an anonymous caller and another tenant's data. Pinned
+    here the same way `/v1/auth/token`'s presence is pinned above, so a
+    future route that forgets to depend on `_scope` fails this file instead
+    of shipping quietly public."""
+    if not (main._DATABASE_CONFIGURED and main._AUTH_CONFIGURED):
+        pytest.skip("both a database and a signing key are needed to get 401 rather than 503")
+    response = client.request(method, path, json=body)
+    assert response.status_code == 401, f"{method} {path} returned {response.status_code}"

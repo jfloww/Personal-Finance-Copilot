@@ -17,6 +17,7 @@ from datetime import date
 from decimal import Decimal
 
 from offerdelta.domain.common.money import Money
+from offerdelta.domain.transactions.view import TransactionView
 from offerdelta.evaluation.dataset import LabelledTransaction
 from offerdelta.evaluation.labels import ABSTAIN, LABEL_SPACE
 from offerdelta.evaluation.llm_categoriser import LLMCategoriser
@@ -54,7 +55,7 @@ def _categoriser(*responses: object) -> tuple[LLMCategoriser, FakeTransport]:
     return LLMCategoriser(provider=provider), transport
 
 
-def _record() -> LabelledTransaction:
+def _record() -> TransactionView:
     return LabelledTransaction(
         transaction_id="t1",
         posted_on=date(2026, 8, 1),
@@ -65,7 +66,7 @@ def _record() -> LabelledTransaction:
         source="test",
         bank_format="test_csv",
         primary_label="LIVING_DINING",
-    )
+    ).view
 
 
 def test_a_valid_label_reaches_the_prediction() -> None:

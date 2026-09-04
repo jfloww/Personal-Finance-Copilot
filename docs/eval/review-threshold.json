@@ -1,0 +1,152 @@
+{
+  "schema": "review-threshold/1",
+  "generated_at": "2026-09-04T13:14:53+00:00",
+  "distribution_caveat": "This curve was swept over LLM predictions made with each row's real account_type and no rule tier ahead of the model, while the deployed categorise.py pipeline runs the rule tier unfitted and sends every row to the model with account_type=\"unknown\" instead, so this curve does not describe the input distribution the deployed pipeline actually produces; the chosen threshold below is kept as-is rather than re-picked against it, since it was chosen once, on the development split, and re-picking now would void that.",
+  "development": {
+    "source": "data/eval/predictions/development-categorise-v3.jsonl",
+    "split": "development",
+    "rows": 265,
+    "curve": [
+      {
+        "threshold": "0.00",
+        "coverage": "1.0000",
+        "accuracy_when_answered": "0.7434",
+        "queued": 0
+      },
+      {
+        "threshold": "0.05",
+        "coverage": "1.0000",
+        "accuracy_when_answered": "0.7434",
+        "queued": 0
+      },
+      {
+        "threshold": "0.10",
+        "coverage": "1.0000",
+        "accuracy_when_answered": "0.7434",
+        "queued": 0
+      },
+      {
+        "threshold": "0.15",
+        "coverage": "1.0000",
+        "accuracy_when_answered": "0.7434",
+        "queued": 0
+      },
+      {
+        "threshold": "0.20",
+        "coverage": "1.0000",
+        "accuracy_when_answered": "0.7434",
+        "queued": 0
+      },
+      {
+        "threshold": "0.25",
+        "coverage": "1.0000",
+        "accuracy_when_answered": "0.7434",
+        "queued": 0
+      },
+      {
+        "threshold": "0.30",
+        "coverage": "1.0000",
+        "accuracy_when_answered": "0.7434",
+        "queued": 0
+      },
+      {
+        "threshold": "0.35",
+        "coverage": "0.9925",
+        "accuracy_when_answered": "0.7490",
+        "queued": 2
+      },
+      {
+        "threshold": "0.40",
+        "coverage": "0.9774",
+        "accuracy_when_answered": "0.7606",
+        "queued": 6
+      },
+      {
+        "threshold": "0.45",
+        "coverage": "0.9774",
+        "accuracy_when_answered": "0.7606",
+        "queued": 6
+      },
+      {
+        "threshold": "0.50",
+        "coverage": "0.9736",
+        "accuracy_when_answered": "0.7636",
+        "queued": 7
+      },
+      {
+        "threshold": "0.55",
+        "coverage": "0.9434",
+        "accuracy_when_answered": "0.7880",
+        "queued": 15
+      },
+      {
+        "threshold": "0.60",
+        "coverage": "0.9434",
+        "accuracy_when_answered": "0.7880",
+        "queued": 15
+      },
+      {
+        "threshold": "0.65",
+        "coverage": "0.9434",
+        "accuracy_when_answered": "0.7880",
+        "queued": 15
+      },
+      {
+        "threshold": "0.70",
+        "coverage": "0.8830",
+        "accuracy_when_answered": "0.8034",
+        "queued": 31
+      },
+      {
+        "threshold": "0.75",
+        "coverage": "0.8453",
+        "accuracy_when_answered": "0.8214",
+        "queued": 41
+      },
+      {
+        "threshold": "0.80",
+        "coverage": "0.6868",
+        "accuracy_when_answered": "0.8462",
+        "queued": 83
+      },
+      {
+        "threshold": "0.85",
+        "coverage": "0.6868",
+        "accuracy_when_answered": "0.8462",
+        "queued": 83
+      },
+      {
+        "threshold": "0.90",
+        "coverage": "0.4415",
+        "accuracy_when_answered": "0.8889",
+        "queued": 148
+      },
+      {
+        "threshold": "0.95",
+        "coverage": "0.4415",
+        "accuracy_when_answered": "0.8889",
+        "queued": 148
+      },
+      {
+        "threshold": "1.00",
+        "coverage": "0.0000",
+        "accuracy_when_answered": "0.0000",
+        "queued": 265
+      }
+    ],
+    "chosen_threshold": "0.80",
+    "chosen_by": "Youden's J statistic, maximised over the curve above: the threshold that best separates rows the model got right from rows it got wrong, using only this development split. J weighs a needless queue entry and a silently wrong accept as equally costly; this threshold governs a human review queue where they may not be.",
+    "note": "Chosen on the development split alone. The benchmark below is measured once, after this choice, and never used to make it."
+  },
+  "holdout": {
+    "source": "data/eval/predictions/holdout-categorise-v3.jsonl",
+    "split": "holdout",
+    "rows": 135,
+    "measured_at_threshold": "0.80",
+    "coverage": "0.5259",
+    "accuracy_when_answered": "0.9014",
+    "queued": 64,
+    "unfiltered_accuracy": "0.6667",
+    "note": "Measured once, after the threshold above was chosen on development. This split was never swept and never chose the number it is measuring."
+  }
+}

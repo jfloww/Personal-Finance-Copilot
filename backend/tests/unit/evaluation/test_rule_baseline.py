@@ -71,26 +71,26 @@ TRAINING = LabelledDataset(
 
 def test_a_known_merchant_is_predicted_from_the_rules() -> None:
     rules = fit_rules(TRAINING)
-    assert rules.predict(_record("x", "NETFLIX", SUBS, "-15.99")).label == SUBS
+    assert rules.predict(_record("x", "NETFLIX", SUBS, "-15.99").view).label == SUBS
 
 
 def test_an_unseen_merchant_causes_abstention() -> None:
     # The behaviour that makes the hybrid worthwhile. Guessing here would
     # inflate accuracy and remove the signal the router needs.
     rules = fit_rules(TRAINING)
-    assert rules.predict(_record("x", "SOME NEW CAFE")).label == ABSTAIN
+    assert rules.predict(_record("x", "SOME NEW CAFE").view).label == ABSTAIN
 
 
 def test_abstention_carries_zero_confidence() -> None:
     rules = fit_rules(TRAINING)
-    assert rules.predict(_record("x", "SOME NEW CAFE")).confidence == Decimal(0)
+    assert rules.predict(_record("x", "SOME NEW CAFE").view).confidence == Decimal(0)
 
 
 def test_a_prediction_explains_itself() -> None:
     # A wrong answer with no reason is only wrong; one with a reason is
     # diagnosable.
     rules = fit_rules(TRAINING)
-    assert rules.predict(_record("x", "NETFLIX", SUBS, "-15.99")).reason
+    assert rules.predict(_record("x", "NETFLIX", SUBS, "-15.99").view).reason
 
 
 def test_the_majority_label_wins_a_conflicted_merchant() -> None:
@@ -104,7 +104,7 @@ def test_the_majority_label_wins_a_conflicted_merchant() -> None:
             _record("3", "TARGET", DINING, "-12.00"),
         ),
     )
-    assert fit_rules(conflicted).predict(_record("x", "TARGET")).label == GROCERY
+    assert fit_rules(conflicted).predict(_record("x", "TARGET").view).label == GROCERY
 
 
 def test_confidence_reflects_how_consistent_the_merchant_was() -> None:
@@ -120,8 +120,8 @@ def test_confidence_reflects_how_consistent_the_merchant_was() -> None:
         ),
     )
     rules = fit_rules(mixed)
-    consistent = rules.predict(_record("x", "COSTCO")).confidence
-    conflicted = rules.predict(_record("y", "TARGET")).confidence
+    consistent = rules.predict(_record("x", "COSTCO").view).confidence
+    conflicted = rules.predict(_record("y", "TARGET").view).confidence
     assert consistent > conflicted
 
 
@@ -137,7 +137,7 @@ def test_an_unseen_positive_amount_is_guessed_as_income() -> None:
     # Weak but genuinely informative: money arriving is rarely spending. Held
     # at low confidence so the hybrid can override it.
     rules = fit_rules(TRAINING)
-    prediction = rules.predict(_record("x", "UNKNOWN EMPLOYER", INCOME, "2500.00"))
+    prediction = rules.predict(_record("x", "UNKNOWN EMPLOYER", INCOME, "2500.00").view)
     assert prediction.label == INCOME
     assert prediction.confidence < Decimal("0.6")
 
@@ -146,7 +146,7 @@ def test_an_unseen_transfer_keyword_is_recognised() -> None:
     # TRANSFER is the label whose absence causes double counting, so it earns a
     # keyword rule even in a baseline this simple.
     rules = fit_rules(TRAINING)
-    prediction = rules.predict(_record("x", "TRANSFER TO BROKERAGE", TRANSFER, "-1000.00"))
+    prediction = rules.predict(_record("x", "TRANSFER TO BROKERAGE", TRANSFER, "-1000.00").view)
     assert prediction.label == TRANSFER
 
 
@@ -159,7 +159,7 @@ def test_a_keyword_rule_does_not_override_a_known_merchant() -> None:
             _record("2", "TRANSFERWISE", DINING, "-25.00"),
         ),
     )
-    assert fit_rules(training).predict(_record("x", "TRANSFERWISE")).label == DINING
+    assert fit_rules(training).predict(_record("x", "TRANSFERWISE").view).label == DINING
 
 
 # --- Batch and identity ----------------------------------------------------
@@ -167,10 +167,10 @@ def test_a_keyword_rule_does_not_override_a_known_merchant() -> None:
 
 def test_predict_many_matches_predict_one_by_one() -> None:
     rules = fit_rules(TRAINING)
-    records = [_record("x", "NETFLIX", SUBS, "-15.99"), _record("y", "NOPE")]
-    assert [p.label for p in rules.predict_many(records)] == [
-        rules.predict(records[0]).label,
-        rules.predict(records[1]).label,
+    views = [_record("x", "NETFLIX", SUBS, "-15.99").view, _record("y", "NOPE").view]
+    assert [p.label for p in rules.predict_many(views)] == [
+        rules.predict(views[0]).label,
+        rules.predict(views[1]).label,
     ]
 
 
@@ -186,9 +186,9 @@ def test_the_baseline_reports_how_many_merchants_it_learned() -> None:
 
 def test_the_baseline_is_reusable_across_records() -> None:
     rules = fit_rules(TRAINING)
-    first = rules.predict(_record("x", "NETFLIX", SUBS, "-15.99")).label
-    rules.predict(_record("y", "WHOLE FOODS", GROCERY, "-88.10"))
-    assert rules.predict(_record("z", "NETFLIX", SUBS, "-15.99")).label == first
+    first = rules.predict(_record("x", "NETFLIX", SUBS, "-15.99").view).label
+    rules.predict(_record("y", "WHOLE FOODS", GROCERY, "-88.10").view)
+    assert rules.predict(_record("z", "NETFLIX", SUBS, "-15.99").view).label == first
 
 
 def test_the_type_is_exported() -> None:

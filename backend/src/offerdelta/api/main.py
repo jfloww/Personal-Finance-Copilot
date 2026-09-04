@@ -9,8 +9,10 @@ The real API arrives in milestone 5.
 
 from __future__ import annotations
 
+import re
+import uuid
 from collections.abc import Iterator
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from functools import lru_cache
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -29,8 +31,12 @@ from offerdelta.api.schemas import (
     ComparisonSchema,
     DerivationNodeSchema,
     HealthSchema,
+    LabelConfirmationSchema,
     LoginSchema,
+    MonthCoverageSchema,
+    MonthlyReportSchema,
     ReadinessSchema,
+    ReviewQueueRowSchema,
     TokenSchema,
     TransactionEntrySchema,
     TransactionStoredSchema,
@@ -40,6 +46,8 @@ from offerdelta.application.auth import authenticate, load_active_user
 from offerdelta.application.idempotency import IdempotencyOutcome, IdempotencyService
 from offerdelta.application.queries.get_demo_comparison import get_demo_comparison
 from offerdelta.application.queries.get_demo_derivation import get_demo_derivation
+from offerdelta.application.reports.monthly import available_months, monthly_report
+from offerdelta.application.reports.review import REVIEW_THRESHOLD, confirm, queue
 from offerdelta.application.scope import TenantScope
 from offerdelta.application.transactions.enter_transaction import (
     ManualEntry,
@@ -408,3 +416,143 @@ def create_transaction(
         fingerprint_version=FINGERPRINT_VERSION,
         occurrence=outcome.occurrence,
     )
+
+
+#: `YYYY-MM` and nothing else. `date.fromisoformat` alone would also accept
+#: `2026-03-01` and silently take its first two fields, which would make
+#: `/v1/reports/monthly/2026-03-01` behave like `2026-03` instead of 422ing -
+#: the exact kind of malformed input this route has to refuse rather than
+#: quietly reinterpret.
+_MONTH_PATTERN: Final = re.compile(r"(?P<year>\d{4})-(?P<month>\d{2})")
+
+
+def _parse_month(value: str) -> tuple[int, int]:
+    """Parse a `YYYY-MM` route value, refusing anything that is not exactly that shape.
+
+    Raises `ValidationError` - mapped to 422 by every caller below - for a
+    string the pattern does not match and, separately, for one that matches
+    but names a month that does not exist (`2026-13`): `date(year, month, 1)`
+    is what actually proves the month is real, since the regex alone accepts
+    `99-99` as two two-digit groups.
+    """
+    match = _MONTH_PATTERN.fullmatch(value)
+    if match is None:
+        raise ValidationError(f"{value!r} is not a YYYY-MM month")
+    year, month = int(match["year"]), int(match["month"])
+    try:
+        date(year, month, 1)
+    except ValueError as error:
+        raise ValidationError(f"{value!r} is not a valid month") from error
+    return year, month
+
+
+@app.get(
+    "/v1/reports/months",
+    include_in_schema=_DATABASE_CONFIGURED,
+    response_model=list[MonthCoverageSchema],
+)
+def report_months(scope: Annotated[TenantScope, Depends(_scope)]) -> list[MonthCoverageSchema]:
+    """Every month this tenant has stored a row for, each marked complete or partial.
+
+    Scoped by `_scope` alone: `available_months` takes a `TenantScope`, and
+    every query it runs filters on that tenant's own accounts - there is no
+    month id or account list a caller could substitute to reach another
+    tenant's data. `REVIEW_THRESHOLD` is passed explicitly rather than left
+    to a default so this list's `awaiting_review` always means the same bar
+    `/v1/review-queue` uses - see `MonthCoverage`'s docstring for why the two
+    functions require it rather than defaulting it independently.
+    """
+    return [
+        MonthCoverageSchema.of(coverage)
+        for coverage in available_months(scope, threshold=REVIEW_THRESHOLD)
+    ]
+
+
+@app.get(
+    "/v1/reports/monthly/{month}",
+    include_in_schema=_DATABASE_CONFIGURED,
+    response_model=MonthlyReportSchema,
+)
+def report_monthly(
+    month: str, scope: Annotated[TenantScope, Depends(_scope)]
+) -> MonthlyReportSchema:
+    """One month's tree, with its coverage.
+
+    A month with no stored rows is not an error: `monthly_report` still
+    builds a tree, rooted at zero, so a tenant who has imported nothing this
+    month gets a valid empty report rather than a 404. `month` is parsed
+    before any query runs, so a malformed value is a 422 from bad input
+    rather than a query silently answering for whatever `_parse_month` would
+    have rejected.
+    """
+    try:
+        year, mon = _parse_month(month)
+    except ValidationError as error:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error)) from error
+    return MonthlyReportSchema.of(monthly_report(scope, year, mon, threshold=REVIEW_THRESHOLD))
+
+
+@app.get(
+    "/v1/review-queue",
+    include_in_schema=_DATABASE_CONFIGURED,
+    response_model=list[ReviewQueueRowSchema],
+)
+def review_queue(
+    scope: Annotated[TenantScope, Depends(_scope)], month: str | None = None
+) -> list[ReviewQueueRowSchema]:
+    """Rows nobody has confirmed and no categoriser confidently resolved.
+
+    `month`, when given, narrows to one calendar month and is parsed with the
+    same `_parse_month` `/v1/reports/monthly/{month}` uses, so a malformed
+    value is 422 here too rather than silently matching nothing. Scoped by
+    `_scope`: `queue` (`offerdelta.application.reports.review.queue`) takes a
+    `TenantScope` and reaches `TransactionRepository.awaiting_review`, which
+    filters on this tenant's own accounts on every path - there is no request
+    shape that reaches another tenant's rows.
+    """
+    parsed_month: tuple[int, int] | None = None
+    if month is not None:
+        try:
+            parsed_month = _parse_month(month)
+        except ValidationError as error:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error)) from error
+
+    rows = queue(scope, REVIEW_THRESHOLD, month=parsed_month)
+    return [
+        ReviewQueueRowSchema(
+            transaction_id=str(row.id),
+            posted_on=row.posted_on,
+            description=row.description,
+            amount=str(row.amount.amount),
+            suggested_label=row.suggested_label,
+            suggested_confidence=(
+                None if row.suggested_confidence is None else str(row.suggested_confidence)
+            ),
+        )
+        for row in rows
+    ]
+
+
+@app.post(
+    "/v1/transactions/{transaction_id}/label",
+    include_in_schema=_DATABASE_CONFIGURED,
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def confirm_transaction_label(
+    transaction_id: uuid.UUID,
+    body: LabelConfirmationSchema,
+    scope: Annotated[TenantScope, Depends(_scope)],
+) -> None:
+    """Record a person's decision on one transaction.
+
+    404, never 403, for a `transaction_id` naming another tenant's row (or no
+    row at all): a 403 would itself confirm the row exists. `body.label` is
+    already checked against the taxonomy at the wire boundary - see
+    `LabelConfirmationSchema` - so the only `ValidationError` `confirm` can
+    raise by the time it reaches here is the tenancy one, and this handler
+    does not need to tell the two apart by inspecting the message.
+    """
+    try:
+        confirm(scope, transaction_id, body.label)
+    except ValidationError as error:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(error)) from error

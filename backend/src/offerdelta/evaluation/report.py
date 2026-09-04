@@ -30,6 +30,7 @@ from decimal import Decimal
 from typing import Protocol
 
 from offerdelta.domain.common.errors import ValidationError
+from offerdelta.domain.transactions.view import TransactionView
 from offerdelta.evaluation.categorisers import Prediction
 from offerdelta.evaluation.dataset import LabelledDataset, LabelledTransaction
 from offerdelta.evaluation.metrics import ClassificationReport, cohens_kappa, score
@@ -42,7 +43,7 @@ class EvaluatableSystem(Protocol):
     @property
     def name(self) -> str: ...
 
-    def predict_many(self, records: Sequence[LabelledTransaction]) -> list[Prediction]: ...
+    def predict_many(self, views: Sequence[TransactionView]) -> list[Prediction]: ...
 
 
 @dataclass(frozen=True)
@@ -264,7 +265,7 @@ def evaluate(
 
 
 def _run(system: EvaluatableSystem, records: tuple[LabelledTransaction, ...]) -> SystemResult:
-    predictions = system.predict_many(records)
+    predictions = system.predict_many([record.view for record in records])
     if len(predictions) != len(records):
         raise ValidationError(
             f"{system.name} returned {len(predictions)} predictions for "

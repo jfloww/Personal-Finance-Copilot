@@ -19,10 +19,10 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Final
 
+from offerdelta.domain.common.derivation import DerivationNode, _weakest
 from offerdelta.domain.common.evidence import Evidence
 from offerdelta.domain.common.money import Money
 from offerdelta.domain.common.periods import PeriodKind
-from offerdelta.domain.comparisons.derivation import DerivationNode
 from offerdelta.domain.comparisons.engine import CalculationResult
 from offerdelta.domain.comparisons.impacts import CostImpact
 from offerdelta.domain.costs.categories import CalculatorName
@@ -43,18 +43,6 @@ def _first_year_amount(impact: CostImpact) -> Money:
     if impact.period is PeriodKind.MONTHLY:
         return impact.cash_amount * _MONTHS_PER_YEAR
     return impact.cash_amount
-
-
-def _weakest(evidence: list[Evidence]) -> Evidence:
-    """A branch is only as well-evidenced as its least-supported leaf.
-
-    Taking the strongest would let one confirmed figure make a branch of
-    guesses look sourced.
-    """
-    for level in (Evidence.ASSUMED, Evidence.DERIVED, Evidence.USER_CONFIRMED):
-        if level in evidence:
-            return level
-    return Evidence.SOURCED
 
 
 def build_derivation(result: CalculationResult, *, label: str) -> DerivationNode:

@@ -142,6 +142,19 @@ def scope(session: Session) -> TenantScope:
 
 
 @pytest.fixture
+def other_scope(session: Session) -> TenantScope:
+    """A second tenant, built the same way as `scope`, to prove isolation.
+
+    Distinct from `scope` on the same session and the same rolled-back
+    transaction, so a test can prove one tenant never sees a row or a month
+    that belongs to the other.
+    """
+    address = f"fixture-{uuid.uuid4().hex[:12]}@example.test"
+    stored = UserRepository(session).create(address, "Other Fixture Owner")
+    return TenantScope(session=session, user=AuthenticatedUser(id=stored.id, email=stored.email))
+
+
+@pytest.fixture
 def client(session: Session) -> Iterator[TestClient]:
     """The app, wired to the transaction this test will roll back.
 

@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Protocol
 
-from offerdelta.evaluation.dataset import LabelledTransaction
+from offerdelta.domain.transactions.view import TransactionView
 from offerdelta.evaluation.labels import ABSTAIN, LABEL_SPACE
 
 
@@ -53,6 +53,6 @@ class Categoriser(Protocol):
     @property
     def name(self) -> str: ...
 
-    def predict(self, record: LabelledTransaction) -> Prediction: ...
+    def predict(self, view: TransactionView) -> Prediction: ...
 
-    def predict_many(self, records: Sequence[LabelledTransaction]) -> list[Prediction]: ...
+    def predict_many(self, views: Sequence[TransactionView]) -> list[Prediction]: ...
