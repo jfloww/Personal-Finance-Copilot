@@ -29,14 +29,17 @@ from offerdelta.infrastructure.postgres.repositories import (
 #: `docs/eval/review-threshold.json` for the swept curve this number was read
 #: off and the coverage/accuracy the held-out split measured at it.
 #:
-#: That curve was swept over LLM predictions made with a real `account_type`
-#: and no rule tier ahead of the model - `categorise.py`'s deployed pipeline
-#: has neither: the rule tier runs unfitted and every row reaches the model
-#: with `account_type="unknown"` (see that module's docstring). So this
-#: number was not chosen against the input distribution the running queue
-#: actually produces. It is kept at 0.80 anyway - re-picking it now, on a
-#: distribution nobody has swept a curve over, would not be a measured choice
-#: either.
+#: That curve was swept over LLM predictions made with no rule tier ahead of
+#: the model, while `categorise.py`'s deployed pipeline runs an unfitted rule
+#: tier first and sends the model only what it abstains on. So this number was
+#: not chosen against the input distribution the running queue actually
+#: produces. It is kept at 0.80 anyway - re-picking it now, on a distribution
+#: nobody has swept a curve over, would not be a measured choice either.
+#:
+#: The `account_type` those predictions carried is *not* one of the
+#: differences, though this comment used to say it was. The benchmark's CSV
+#: has no `account_type` column, so `evaluation.csv_loader` scored every one
+#: of its rows at the same `"unknown"` the deployed pipeline sends.
 #:
 #: That file is not read here. It records an analysis, not configuration: a
 #: deployed service reading a docs artifact at request time would acquire a

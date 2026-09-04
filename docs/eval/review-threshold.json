@@ -1,7 +1,7 @@
 {
   "schema": "review-threshold/1",
-  "generated_at": "2026-09-04T13:14:53+00:00",
-  "distribution_caveat": "This curve was swept over LLM predictions made with each row's real account_type and no rule tier ahead of the model, while the deployed categorise.py pipeline runs the rule tier unfitted and sends every row to the model with account_type=\"unknown\" instead, so this curve does not describe the input distribution the deployed pipeline actually produces; the chosen threshold below is kept as-is rather than re-picked against it, since it was chosen once, on the development split, and re-picking now would void that.",
+  "generated_at": "2026-09-04T15:43:15+00:00",
+  "distribution_caveat": "This curve was swept over LLM predictions made with no rule tier ahead of the model, while the deployed categorise.py pipeline runs an unfitted rule tier first and sends the model only what it abstains on, so this curve does not describe the input distribution the deployed pipeline actually produces; the chosen threshold below is kept as-is rather than re-picked against it, since it was chosen once, on the development split, and re-picking now would void that. An earlier version of this caveat also claimed the sweep used each row's real account_type. It did not: the benchmark CSV carries no account_type column, so every scored row used the same \"unknown\" the deployed pipeline sends.",
   "development": {
     "source": "data/eval/predictions/development-categorise-v3.jsonl",
     "split": "development",
