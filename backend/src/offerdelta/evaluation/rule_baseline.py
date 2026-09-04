@@ -29,8 +29,9 @@ from decimal import Decimal
 from typing import Final
 
 from offerdelta.domain.common.errors import ValidationError
+from offerdelta.domain.transactions.view import TransactionView
 from offerdelta.evaluation.categorisers import Prediction
-from offerdelta.evaluation.dataset import LabelledDataset, LabelledTransaction
+from offerdelta.evaluation.dataset import LabelledDataset
 
 #: Descriptions containing these are almost always movement between the user's
 #: own accounts. TRANSFER earns a keyword rule even in a baseline this simple,
@@ -63,8 +64,8 @@ class RuleBaseline:
         """
         return len(self.merchant_labels)
 
-    def predict(self, record: LabelledTransaction) -> Prediction:
-        merchant = record.normalised_merchant
+    def predict(self, view: TransactionView) -> Prediction:
+        merchant = view.normalised_merchant
 
         # Exact merchant knowledge beats any keyword guess.
         if merchant in self.merchant_labels:
@@ -78,7 +79,7 @@ class RuleBaseline:
                 ),
             )
 
-        haystack = f"{record.raw_description} {merchant}".upper()
+        haystack = f"{view.raw_description} {merchant}".upper()
         for keyword in _TRANSFER_KEYWORDS:
             if keyword in haystack:
                 return Prediction(
@@ -87,7 +88,7 @@ class RuleBaseline:
                     reason=f"description contains {keyword!r}",
                 )
 
-        if record.amount.amount > 0:
+        if view.amount.amount > 0:
             return Prediction(
                 label="INCOME",
                 confidence=_SIGN_CONFIDENCE,
@@ -96,8 +97,8 @@ class RuleBaseline:
 
         return Prediction.abstain(f"merchant {merchant!r} was not seen in the development split")
 
-    def predict_many(self, records: Sequence[LabelledTransaction]) -> list[Prediction]:
-        return [self.predict(record) for record in records]
+    def predict_many(self, views: Sequence[TransactionView]) -> list[Prediction]:
+        return [self.predict(view) for view in views]
 
 
 def fit_rules(dataset: LabelledDataset) -> RuleBaseline:

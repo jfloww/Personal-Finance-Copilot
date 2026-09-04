@@ -18,10 +18,10 @@ tax engine does not arrive until phase 2.
 
 from __future__ import annotations
 
+from offerdelta.domain.common.derivation import DerivationNode
 from offerdelta.domain.common.evidence import Evidence
 from offerdelta.domain.common.money import Money
 from offerdelta.domain.common.periods import PeriodKind
-from offerdelta.domain.comparisons.derivation import DerivationNode
 
 
 def _cost(code: str, label: str, amount: Money) -> DerivationNode:

@@ -11,8 +11,8 @@ why the tree marks provenance on each node.
 
 from __future__ import annotations
 
+from offerdelta.domain.common.derivation import DerivationNode
 from offerdelta.domain.common.money import Money
-from offerdelta.domain.comparisons.derivation import DerivationNode
 from offerdelta.domain.comparisons.simple_cash import monthly_disposable_cash
 
 

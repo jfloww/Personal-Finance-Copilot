@@ -13,6 +13,7 @@ from datetime import date
 from decimal import Decimal
 
 from offerdelta.domain.common.money import Money
+from offerdelta.domain.transactions.view import TransactionView
 from offerdelta.evaluation.dataset import LabelledDataset, LabelledTransaction
 from offerdelta.evaluation.labels import ABSTAIN
 from offerdelta.evaluation.llm_categoriser import HybridCategoriser, LLMCategoriser
@@ -28,7 +29,7 @@ DINING = "LIVING_DINING"
 SUBS = "LIVING_SUBSCRIPTIONS"
 
 
-def _record(txn_id: str, merchant: str, description: str | None = None) -> LabelledTransaction:
+def _record(txn_id: str, merchant: str, description: str | None = None) -> TransactionView:
     return LabelledTransaction(
         transaction_id=txn_id,
         posted_on=date(2026, 8, 1),
@@ -39,7 +40,7 @@ def _record(txn_id: str, merchant: str, description: str | None = None) -> Label
         source="test",
         bank_format="test_csv",
         primary_label=DINING,
-    )
+    ).view
 
 
 def _response(label: str, confidence: str = "0.9", **kw: int) -> LLMResponse:

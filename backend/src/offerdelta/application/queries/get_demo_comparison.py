@@ -22,13 +22,13 @@ from offerdelta.demo.profiles import (
     new_jersey_candidate,
 )
 from offerdelta.domain.common.dates import DateRange
+from offerdelta.domain.common.derivation import DerivationNode
 from offerdelta.domain.common.errors import ValidationError
 from offerdelta.domain.common.money import Money
 from offerdelta.domain.common.percentage import Percentage
 from offerdelta.domain.common.periods import PeriodicAmount, PeriodKind
 from offerdelta.domain.comparisons.comparison import ComparisonResult, compare
 from offerdelta.domain.comparisons.context import CalculationContext
-from offerdelta.domain.comparisons.derivation import DerivationNode
 from offerdelta.domain.comparisons.derivation_builder import build_derivation
 from offerdelta.domain.comparisons.pre_move import inherit_costs_until_move
 from offerdelta.domain.solvers.break_even import BreakEvenResult, solve_break_even

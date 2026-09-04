@@ -245,6 +245,23 @@ class TransactionRow(Base):
     source_line: Mapped[int | None] = mapped_column(Integer, nullable=True)
     raw_cells: Mapped[dict[str, str] | None] = mapped_column(JSONB, nullable=True)
 
+    #: What a categoriser proposed. Overwritten freely by re-classification.
+    #: NULL means never examined; the literal 'UNKNOWN' means examined and
+    #: declined, which is abstention and a different fact entirely.
+    suggested_label: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    suggested_source: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    suggested_confidence: Mapped[Decimal | None] = mapped_column(Numeric(4, 3), nullable=True)
+
+    #: Which ruleset or which model-and-prompt produced it, so a report can
+    #: answer what made its numbers.
+    suggested_by: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    suggested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    #: A person's decision. Re-classification never writes here, so erasing
+    #: one is not something a caller has to remember not to do.
+    confirmed_label: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
     __table_args__ = (
         CheckConstraint("occurrence > 0", name="ck_transactions_occurrence_positive"),
         CheckConstraint(

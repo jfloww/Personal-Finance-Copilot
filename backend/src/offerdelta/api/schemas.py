@@ -19,7 +19,9 @@ from datetime import date
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from offerdelta.domain.comparisons.derivation import DerivationNode
+from offerdelta.application.reports.monthly import MonthCoverage, MonthlyReport
+from offerdelta.domain.common.derivation import DerivationNode
+from offerdelta.evaluation.labels import ABSTAIN, LABEL_SPACE
 
 
 class DerivationNodeSchema(BaseModel):
@@ -236,3 +238,116 @@ class TransactionStoredSchema(BaseModel):
     fingerprint: str
     fingerprint_version: int
     occurrence: int
+
+
+class MonthCoverageSchema(BaseModel):
+    """How much of one calendar month this tenant's stored rows account for.
+
+    Mirrors `offerdelta.application.reports.monthly.MonthCoverage` field for
+    field - see that type's docstring for what `complete` and
+    `awaiting_review` do and do not claim.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    year: int
+    month: int
+    complete: bool
+    rows: int
+    classified: int
+    awaiting_review: int
+
+    @classmethod
+    def of(cls, coverage: MonthCoverage) -> MonthCoverageSchema:
+        return cls(
+            year=coverage.year,
+            month=coverage.month,
+            complete=coverage.complete,
+            rows=coverage.rows,
+            classified=coverage.classified,
+            awaiting_review=coverage.awaiting_review,
+        )
+
+
+class MonthlyReportSchema(BaseModel):
+    """One month's tree, plus how much of the month it could account for.
+
+    `tree` reuses `DerivationNodeSchema` - the same serialiser
+    `/v1/demo/derivation` uses - rather than a second one, so the "amounts
+    are decimal strings, never numbers" guarantee and its contract test cover
+    this tree too, without restating either.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    tree: DerivationNodeSchema
+    coverage: MonthCoverageSchema
+
+    @classmethod
+    def of(cls, report: MonthlyReport) -> MonthlyReportSchema:
+        return cls(
+            tree=DerivationNodeSchema.of(report.tree),
+            coverage=MonthCoverageSchema.of(report.coverage),
+        )
+
+
+class ReviewQueueRowSchema(BaseModel):
+    """One stored row awaiting a person's decision.
+
+    Deliberately narrower than the full `StoredTransaction` a repository
+    returns: no account id, batch id, or raw source cells - a review queue
+    exists to collect a label, not to double as an import audit trail, and
+    every field kept here is one this route has to be able to justify handing
+    back to whichever tenant is asking.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    transaction_id: str
+    posted_on: date
+    description: str
+    amount: str = Field(description="Exact decimal string. Never parse this as a number.")
+    suggested_label: str | None
+    suggested_confidence: str | None = Field(
+        default=None,
+        description="Exact decimal string when present. Never parse this as a number.",
+    )
+
+
+class LabelConfirmationSchema(BaseModel):
+    """A confirmed label, as it arrives on the wire.
+
+    `label` is checked against the taxonomy here, at the wire boundary,
+    rather than left for `TransactionRepository.confirm_label` to reject.
+    That repository method raises the same `ValidationError` - and the same
+    message - for an unknown label as it does for a transaction id naming
+    another tenant's row, because the two must read identically to a caller
+    probing for one tenant's data through another's session. A route that let
+    an invalid label reach that method would have to guess, from a shared
+    message, whether to answer 422 or 404; rejecting it here means the only
+    `ValidationError` left for the route to catch is the tenancy one, so it
+    can map that to 404 without ambiguity. Compare
+    `TransactionEntrySchema._description_is_not_blank`, which exists for the
+    same reason on the same route family.
+
+    `ABSTAIN` ("UNKNOWN") is in `LABEL_SPACE` - a categoriser needs to be
+    able to say it - but a person cannot *confirm* an abstention: there is no
+    unconfirm route, so a row confirmed as `UNKNOWN` would leave the review
+    queue forever, and `_group_by_label` gives that leaf `Evidence.ASSUMED`
+    regardless of `confirmed`, so the month's root could never turn
+    `USER_CONFIRMED` either. Declining to label a row is done by leaving it
+    alone, not by parking it here.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    label: str = Field(min_length=1)
+
+    @field_validator("label")
+    @classmethod
+    def _label_is_in_the_taxonomy(cls, value: str) -> str:
+        if value not in LABEL_SPACE:
+            raise ValueError(f"{value!r} is not a label in this taxonomy")
+        if value == ABSTAIN:
+            raise ValueError(f"{value!r} cannot be confirmed; leave the row unreviewed instead")
+        return value
