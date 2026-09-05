@@ -37,7 +37,8 @@ import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Final
+from functools import lru_cache
+from typing import Final, TextIO
 
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -49,6 +50,14 @@ from offerdelta.domain.common.errors import ValidationError
 from offerdelta.evaluation.labels import ABSTAIN, LABEL_SPACE
 from offerdelta.infrastructure.postgres.engine import get_engine
 from offerdelta.infrastructure.postgres.repositories import StoredTransaction, UserRepository
+
+#: Where a person actually types, which is not necessarily stdin. `git` and
+#: `ssh` read their prompts from this device for the same reason: a command
+#: whose whole job is to ask questions must not be silenced by however its
+#: stdin happened to be wired up. Opening it succeeds on Windows even with
+#: stdin redirected from `/dev/null`, which is the case that ended a whole
+#: review session at the first question.
+_CONSOLE_DEVICE: Final = "CONIN$" if sys.platform == "win32" else "/dev/tty"
 
 #: Sorted once so `?` and the ambiguity message list labels in a stable order.
 _LABELS: Final = tuple(sorted(LABEL_SPACE))
@@ -117,23 +126,57 @@ def _open_scope(email: str) -> TenantScope:
     return TenantScope(session=session, user=AuthenticatedUser(id=stored.id, email=stored.email))
 
 
+@lru_cache(maxsize=1)
+def _console() -> TextIO | None:
+    """The console, opened once, or `None` where the process has none.
+
+    `None` is the honest answer in CI and under a pipe, and it is what sends
+    `_prompt` back to `input()` - the fallback still works wherever stdin
+    really is the answer channel.
+    """
+    try:
+        # Deliberately not a context manager: this handle is the session's
+        # input for as long as the session lasts, and is closed by the
+        # process exiting.
+        return open(_CONSOLE_DEVICE, encoding="utf-8")
+    except OSError:
+        return None
+
+
 def _prompt(message: str) -> str:
-    """Read one answer. Its own function so a test can supply the answers."""
-    return input(message)
+    """Ask one question and read the answer from wherever the person is.
+
+    Deliberately not `input()`. `input()` reads stdin, and stdin is not
+    reliably where a person types: this command ended an entire session at
+    its first question because stdin was empty while a terminal sat waiting
+    for an answer. Reading the console device instead is what `git` and `ssh`
+    do about the same problem.
+
+    Its own function so a test can supply the answers without a console.
+    """
+    console = _console()
+    if console is None:
+        return input(message)
+    print(message, end="", flush=True)
+    line = console.readline()
+    if not line:
+        raise EOFError
+    return line.rstrip("\r\n")
 
 
 def _is_a_terminal() -> bool:
-    """A cheap first check for whether somebody is there. Not the last one.
+    """A cheap first check for whether there is anywhere to ask. Not the last one.
 
-    `isatty()` is not trustworthy everywhere - on Windows it reports a
-    terminal even with stdin redirected from `/dev/null`, which
-    `transactions.py`'s `_confirm` already says in so many words. This
-    catches the honest case early, before a database connection is opened,
-    and `_work` treats an EOF on the very first prompt as the authoritative
-    answer. Believing this alone is how the first version of this command
-    ended a session silently at "confirmed 0 rows".
+    Deliberately not `isatty()` alone: it reports a terminal on Windows even
+    with stdin redirected from `/dev/null` - `transactions.py`'s `_confirm`
+    says so in as many words - so believing it is how this command once ended
+    a session silently at "confirmed 0 rows". What matters is whether the
+    device `_prompt` reads from can be opened at all.
+
+    Still only a first check, run before a database connection is opened.
+    The authority is an EOF at the first prompt, which `_work` reports.
     """
-    return sys.stdin.isatty()
+    return _console() is not None or sys.stdin.isatty()
 
 
 def resolve_label(entry: str) -> tuple[str | None, tuple[str, ...]]:
