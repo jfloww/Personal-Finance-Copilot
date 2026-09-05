@@ -66,6 +66,11 @@ _YEAR_DIGITS: Final = 4
 _LABEL_COLUMNS: Final = 3
 _LABEL_WIDTH: Final = 30
 
+#: `_ask_scope`'s fourth answer, which nobody can type: stdin ended. Distinct
+#: from `q` because a person choosing to stop and a session with nobody in it
+#: are different outcomes - see `_Answer.exhausted`.
+_EXHAUSTED: Final = "eof"
+
 #: Descriptions are printed to a fixed width so the amount column lines up.
 #: A bank description longer than this is truncated for display only; the
 #: stored row is untouched.
@@ -118,7 +123,16 @@ def _prompt(message: str) -> str:
 
 
 def _is_a_terminal() -> bool:
-    """Whether there is somebody there to answer. Also a test seam."""
+    """A cheap first check for whether somebody is there. Not the last one.
+
+    `isatty()` is not trustworthy everywhere - on Windows it reports a
+    terminal even with stdin redirected from `/dev/null`, which
+    `transactions.py`'s `_confirm` already says in so many words. This
+    catches the honest case early, before a database connection is opened,
+    and `_work` treats an EOF on the very first prompt as the authoritative
+    answer. Believing this alone is how the first version of this command
+    ended a session silently at "confirmed 0 rows".
+    """
     return sys.stdin.isatty()
 
 
@@ -225,6 +239,13 @@ class _Answer:
     label: str | None = None
     stop: bool = False
 
+    #: Set when the session stopped because stdin ran out rather than because
+    #: somebody typed `q`. The two are indistinguishable at the prompt and
+    #: must not be reported alike: `_is_a_terminal` cannot be trusted on
+    #: Windows, so an EOF on the very first question is how "there is nobody
+    #: at this terminal" actually arrives.
+    exhausted: bool = False
+
 
 @dataclass(frozen=True)
 class _GroupOutcome:
@@ -232,6 +253,7 @@ class _GroupOutcome:
 
     confirmed: int
     stop: bool
+    exhausted: bool = False
 
 
 def _ask_label(message: str, default: str | None) -> _Answer:
@@ -247,7 +269,7 @@ def _ask_label(message: str, default: str | None) -> _Answer:
         try:
             entry = _prompt(message).strip()
         except EOFError:
-            return _Answer(stop=True)
+            return _Answer(stop=True, exhausted=True)
 
         if entry.lower() == "q":
             return _Answer(stop=True)
@@ -270,12 +292,12 @@ def _ask_label(message: str, default: str | None) -> _Answer:
 
 
 def _ask_scope(count: int) -> str:
-    """What to do with one label across a group: `y`, `s`, or `q`."""
+    """What to do with one label across a group: `y`, `s`, `q`, or nobody there."""
     while True:
         try:
             entry = _prompt(f"apply to all {count}?  [y] yes  [s] split row-by-row  [q] quit: ")
         except EOFError:
-            return "q"
+            return _EXHAUSTED
         choice = entry.strip().lower()
         if choice in {"y", "s", "q"}:
             return choice
@@ -299,7 +321,7 @@ def _split_group(
             default = group_label
         answer = _ask_label("  label> ", default)
         if answer.stop or answer.label is None:
-            return _GroupOutcome(confirmed=confirmed, stop=True)
+            return _GroupOutcome(confirmed=confirmed, stop=True, exhausted=answer.exhausted)
         confirm(scope, row.id, answer.label)
         confirmed += 1
     return _GroupOutcome(confirmed=confirmed, stop=False)
@@ -309,15 +331,15 @@ def _work_group(scope: TenantScope, rows: Sequence[StoredTransaction]) -> _Group
     """Settle one merchant. The caller renders it and commits afterwards."""
     answer = _ask_label("label> ", suggested_default(rows))
     if answer.stop or answer.label is None:
-        return _GroupOutcome(confirmed=0, stop=True)
+        return _GroupOutcome(confirmed=0, stop=True, exhausted=answer.exhausted)
 
     if len(rows) == 1:
         confirm(scope, rows[0].id, answer.label)
         return _GroupOutcome(confirmed=1, stop=False)
 
     choice = _ask_scope(len(rows))
-    if choice == "q":
-        return _GroupOutcome(confirmed=0, stop=True)
+    if choice in {"q", _EXHAUSTED}:
+        return _GroupOutcome(confirmed=0, stop=True, exhausted=choice == _EXHAUSTED)
     if choice == "s":
         return _split_group(scope, rows, answer.label)
 
@@ -359,6 +381,7 @@ def _work(args: argparse.Namespace) -> int:
             return 0
 
         confirmed = 0
+        exhausted = False
         for position, (merchant, rows) in enumerate(groups.items(), start=1):
             _render_group(position, len(groups), merchant, rows)
             outcome = _work_group(scope, rows)
@@ -367,7 +390,16 @@ def _work(args: argparse.Namespace) -> int:
             # keeps every answer already given.
             scope.session.commit()
             if outcome.stop:
+                exhausted = outcome.exhausted
                 break
+
+        if exhausted and confirmed == 0:
+            # Nothing was asked and nothing was answered, so this is the
+            # environment, not a decision. Saying "confirmed 0 rows" here
+            # reads as "there was nothing to do", which is the opposite of
+            # what happened - see `_is_a_terminal`.
+            print("\nno input available; run this from a terminal that can answer")
+            return 1
 
         print(f"\nconfirmed {confirmed} rows")
         return 0
