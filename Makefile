@@ -4,7 +4,7 @@ BACKEND := backend
 
 # The same set .github/workflows/ci.yml formats and lints, so one list keeps a
 # green `make check` and a green CI from drifting apart.
-PY_FILES := src tests analyse_failures.py annotate.py build_eval_subset.py build_public_results.py categorise.py llm_smoke.py run_evaluation.py seed_demo.py sweep_threshold.py transactions.py users.py validate_dataset.py
+PY_FILES := src tests analyse_failures.py annotate.py build_eval_subset.py build_public_results.py categorise.py llm_smoke.py review.py run_evaluation.py seed_demo.py sweep_threshold.py transactions.py users.py validate_dataset.py
 
 install:
 	cd $(BACKEND) && uv sync
