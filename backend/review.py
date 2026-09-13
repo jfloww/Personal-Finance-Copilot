@@ -37,7 +37,8 @@ import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Final
+from functools import lru_cache
+from typing import Final, TextIO
 
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -49,6 +50,14 @@ from offerdelta.domain.common.errors import ValidationError
 from offerdelta.evaluation.labels import ABSTAIN, LABEL_SPACE
 from offerdelta.infrastructure.postgres.engine import get_engine
 from offerdelta.infrastructure.postgres.repositories import StoredTransaction, UserRepository
+
+#: Where a person actually types, which is not necessarily stdin. `git` and
+#: `ssh` read their prompts from this device for the same reason: a command
+#: whose whole job is to ask questions must not be silenced by however its
+#: stdin happened to be wired up. Opening it succeeds on Windows even with
+#: stdin redirected from `/dev/null`, which is the case that ended a whole
+#: review session at the first question.
+_CONSOLE_DEVICE: Final = "CONIN$" if sys.platform == "win32" else "/dev/tty"
 
 #: Sorted once so `?` and the ambiguity message list labels in a stable order.
 _LABELS: Final = tuple(sorted(LABEL_SPACE))
@@ -65,6 +74,11 @@ _YEAR_DIGITS: Final = 4
 #: longest label is `HOUSING_PARKING_RESIDENTIAL` at 27 characters.
 _LABEL_COLUMNS: Final = 3
 _LABEL_WIDTH: Final = 30
+
+#: `_ask_scope`'s fourth answer, which nobody can type: stdin ended. Distinct
+#: from `q` because a person choosing to stop and a session with nobody in it
+#: are different outcomes - see `_Answer.exhausted`.
+_EXHAUSTED: Final = "eof"
 
 #: Descriptions are printed to a fixed width so the amount column lines up.
 #: A bank description longer than this is truncated for display only; the
@@ -112,14 +126,57 @@ def _open_scope(email: str) -> TenantScope:
     return TenantScope(session=session, user=AuthenticatedUser(id=stored.id, email=stored.email))
 
 
+@lru_cache(maxsize=1)
+def _console() -> TextIO | None:
+    """The console, opened once, or `None` where the process has none.
+
+    `None` is the honest answer in CI and under a pipe, and it is what sends
+    `_prompt` back to `input()` - the fallback still works wherever stdin
+    really is the answer channel.
+    """
+    try:
+        # Deliberately not a context manager: this handle is the session's
+        # input for as long as the session lasts, and is closed by the
+        # process exiting.
+        return open(_CONSOLE_DEVICE, encoding="utf-8")
+    except OSError:
+        return None
+
+
 def _prompt(message: str) -> str:
-    """Read one answer. Its own function so a test can supply the answers."""
-    return input(message)
+    """Ask one question and read the answer from wherever the person is.
+
+    Deliberately not `input()`. `input()` reads stdin, and stdin is not
+    reliably where a person types: this command ended an entire session at
+    its first question because stdin was empty while a terminal sat waiting
+    for an answer. Reading the console device instead is what `git` and `ssh`
+    do about the same problem.
+
+    Its own function so a test can supply the answers without a console.
+    """
+    console = _console()
+    if console is None:
+        return input(message)
+    print(message, end="", flush=True)
+    line = console.readline()
+    if not line:
+        raise EOFError
+    return line.rstrip("\r\n")
 
 
 def _is_a_terminal() -> bool:
-    """Whether there is somebody there to answer. Also a test seam."""
-    return sys.stdin.isatty()
+    """A cheap first check for whether there is anywhere to ask. Not the last one.
+
+    Deliberately not `isatty()` alone: it reports a terminal on Windows even
+    with stdin redirected from `/dev/null` - `transactions.py`'s `_confirm`
+    says so in as many words - so believing it is how this command once ended
+    a session silently at "confirmed 0 rows". What matters is whether the
+    device `_prompt` reads from can be opened at all.
+
+    Still only a first check, run before a database connection is opened.
+    The authority is an EOF at the first prompt, which `_work` reports.
+    """
+    return _console() is not None or sys.stdin.isatty()
 
 
 def resolve_label(entry: str) -> tuple[str | None, tuple[str, ...]]:
@@ -225,6 +282,13 @@ class _Answer:
     label: str | None = None
     stop: bool = False
 
+    #: Set when the session stopped because stdin ran out rather than because
+    #: somebody typed `q`. The two are indistinguishable at the prompt and
+    #: must not be reported alike: `_is_a_terminal` cannot be trusted on
+    #: Windows, so an EOF on the very first question is how "there is nobody
+    #: at this terminal" actually arrives.
+    exhausted: bool = False
+
 
 @dataclass(frozen=True)
 class _GroupOutcome:
@@ -232,6 +296,7 @@ class _GroupOutcome:
 
     confirmed: int
     stop: bool
+    exhausted: bool = False
 
 
 def _ask_label(message: str, default: str | None) -> _Answer:
@@ -247,7 +312,7 @@ def _ask_label(message: str, default: str | None) -> _Answer:
         try:
             entry = _prompt(message).strip()
         except EOFError:
-            return _Answer(stop=True)
+            return _Answer(stop=True, exhausted=True)
 
         if entry.lower() == "q":
             return _Answer(stop=True)
@@ -270,12 +335,12 @@ def _ask_label(message: str, default: str | None) -> _Answer:
 
 
 def _ask_scope(count: int) -> str:
-    """What to do with one label across a group: `y`, `s`, or `q`."""
+    """What to do with one label across a group: `y`, `s`, `q`, or nobody there."""
     while True:
         try:
             entry = _prompt(f"apply to all {count}?  [y] yes  [s] split row-by-row  [q] quit: ")
         except EOFError:
-            return "q"
+            return _EXHAUSTED
         choice = entry.strip().lower()
         if choice in {"y", "s", "q"}:
             return choice
@@ -299,7 +364,7 @@ def _split_group(
             default = group_label
         answer = _ask_label("  label> ", default)
         if answer.stop or answer.label is None:
-            return _GroupOutcome(confirmed=confirmed, stop=True)
+            return _GroupOutcome(confirmed=confirmed, stop=True, exhausted=answer.exhausted)
         confirm(scope, row.id, answer.label)
         confirmed += 1
     return _GroupOutcome(confirmed=confirmed, stop=False)
@@ -309,15 +374,15 @@ def _work_group(scope: TenantScope, rows: Sequence[StoredTransaction]) -> _Group
     """Settle one merchant. The caller renders it and commits afterwards."""
     answer = _ask_label("label> ", suggested_default(rows))
     if answer.stop or answer.label is None:
-        return _GroupOutcome(confirmed=0, stop=True)
+        return _GroupOutcome(confirmed=0, stop=True, exhausted=answer.exhausted)
 
     if len(rows) == 1:
         confirm(scope, rows[0].id, answer.label)
         return _GroupOutcome(confirmed=1, stop=False)
 
     choice = _ask_scope(len(rows))
-    if choice == "q":
-        return _GroupOutcome(confirmed=0, stop=True)
+    if choice in {"q", _EXHAUSTED}:
+        return _GroupOutcome(confirmed=0, stop=True, exhausted=choice == _EXHAUSTED)
     if choice == "s":
         return _split_group(scope, rows, answer.label)
 
@@ -359,6 +424,7 @@ def _work(args: argparse.Namespace) -> int:
             return 0
 
         confirmed = 0
+        exhausted = False
         for position, (merchant, rows) in enumerate(groups.items(), start=1):
             _render_group(position, len(groups), merchant, rows)
             outcome = _work_group(scope, rows)
@@ -367,7 +433,16 @@ def _work(args: argparse.Namespace) -> int:
             # keeps every answer already given.
             scope.session.commit()
             if outcome.stop:
+                exhausted = outcome.exhausted
                 break
+
+        if exhausted and confirmed == 0:
+            # Nothing was asked and nothing was answered, so this is the
+            # environment, not a decision. Saying "confirmed 0 rows" here
+            # reads as "there was nothing to do", which is the opposite of
+            # what happened - see `_is_a_terminal`.
+            print("\nno input available; run this from a terminal that can answer")
+            return 1
 
         print(f"\nconfirmed {confirmed} rows")
         return 0

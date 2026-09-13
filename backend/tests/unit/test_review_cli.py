@@ -324,6 +324,30 @@ def test_running_out_of_answers_ends_the_session_rather_than_raising(
     assert harness.confirmed == [("STARBUCKS", "LIVING_DINING")]
 
 
+def test_stdin_ending_before_the_first_answer_is_reported_rather_than_counted_as_done(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The bug this test exists for: a silent "confirmed 0 rows" and exit 0.
+
+    `_is_a_terminal` returned True on Windows with stdin redirected from
+    `/dev/null`, so the guard let the session through, the first prompt hit
+    EOF, and the run ended looking like there had been nothing to do. There
+    was: 172 merchants were waiting. An EOF before any answer is the
+    environment, not a decision, and must say so.
+    """
+    harness = _Harness([_row("STARBUCKS", suggested="LIVING_DINING")], answers=[])
+    # Exactly the lie the real terminal told: a tty that cannot be read.
+    harness.install(monkeypatch, terminal=True)
+
+    exit_code = harness.run()
+
+    out = capsys.readouterr().out
+    assert exit_code == 1
+    assert "no input available" in out
+    assert "confirmed 0 rows" not in out
+    assert harness.confirmed == []
+
+
 def test_an_ambiguous_answer_writes_nothing_and_asks_again(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
