@@ -19,6 +19,11 @@ from offerdelta.infrastructure.llm.anthropic import (
     AnthropicConfig,
     AnthropicProvider,
 )
+from offerdelta.infrastructure.llm.anthropic_agent import (
+    DEFAULT_AGENT_MODEL,
+    AnthropicAgentConfig,
+    AnthropicAgentProvider,
+)
 from offerdelta.infrastructure.llm.prompts import PROMPT_VERSION
 
 
@@ -43,3 +48,16 @@ def build_provider(
         prompt_version=prompt_version,
     )
     return AnthropicProvider(config=config)
+
+
+def build_agent_provider(settings: Settings | None = None) -> AnthropicAgentProvider | None:
+    """A live single-agent provider, or ``None`` on the keyless path."""
+    settings = settings or get_settings()
+    if not settings.anthropic_api_key:
+        return None
+    return AnthropicAgentProvider(
+        config=AnthropicAgentConfig(
+            api_key=settings.anthropic_api_key,
+            model=settings.agent_model or DEFAULT_AGENT_MODEL,
+        )
+    )

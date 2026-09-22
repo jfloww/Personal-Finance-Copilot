@@ -16,11 +16,8 @@ from datetime import date
 from decimal import Decimal
 from typing import Final
 
-from offerdelta.demo.profiles import (
-    ComparisonSide,
-    auburn_current,
-    new_jersey_candidate,
-)
+from offerdelta.application.queries.demo_profiles import load_demo_profile
+from offerdelta.demo.profiles import AUBURN_CURRENT, NEW_JERSEY_CANDIDATE, ComparisonSide
 from offerdelta.domain.common.dates import DateRange
 from offerdelta.domain.common.derivation import DerivationNode
 from offerdelta.domain.common.errors import ValidationError
@@ -101,6 +98,8 @@ def _context(side: ComparisonSide, horizon_months: int) -> CalculationContext:
 
 def get_demo_comparison(
     *,
+    current_key: str = AUBURN_CURRENT,
+    candidate_key: str = NEW_JERSEY_CANDIDATE,
     horizon_months: int = HORIZON_MONTHS,
     move_date: date | None = MOVE_DATE,
 ) -> ComparisonView:
@@ -114,9 +113,11 @@ def get_demo_comparison(
         raise ValidationError(
             f"a comparison horizon must span at least one month, got {horizon_months}"
         )
+    if current_key == candidate_key:
+        raise ValidationError("current and candidate profiles must be different")
 
-    current = _context(auburn_current(), horizon_months)
-    candidate = _context(new_jersey_candidate(), horizon_months)
+    current = _context(load_demo_profile(current_key), horizon_months)
+    candidate = _context(load_demo_profile(candidate_key), horizon_months)
 
     result = compare(current=current, candidate=candidate, move_date=move_date)
 

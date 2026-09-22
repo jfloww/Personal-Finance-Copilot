@@ -4,7 +4,7 @@ The milestone-0 definition of done requires a single command that runs all
 checks. `make` is not present on a default Windows install, so this script is
 the portable entry point and the Makefile simply delegates to the same tools.
 
-    uv run python check.py
+    PYTHONPATH=src uv run python check.py
 
 Runs everything rather than stopping at the first failure, so one invocation
 reports every problem instead of revealing them one at a time.
@@ -16,8 +16,55 @@ import subprocess
 import sys
 
 CHECKS: list[tuple[str, list[str]]] = [
-    ("format", ["ruff", "format", "--check", "src", "tests", "analyse_failures.py", "annotate.py", "build_eval_subset.py", "build_public_results.py", "llm_smoke.py", "run_evaluation.py", "transactions.py", "validate_dataset.py"]),
-    ("lint", ["ruff", "check", "src", "tests", "analyse_failures.py", "annotate.py", "build_eval_subset.py", "build_public_results.py", "llm_smoke.py", "run_evaluation.py", "transactions.py", "validate_dataset.py"]),
+    (
+        "format",
+        [
+            "ruff",
+            "format",
+            "--check",
+            "src",
+            "tests",
+            "analyse_failures.py",
+            "annotate.py",
+            "build_eval_subset.py",
+            "build_public_results.py",
+            "categorise.py",
+            "llm_smoke.py",
+            "review.py",
+            "run_agent_evaluation.py",
+            "run_operations_agent.py",
+            "run_evaluation.py",
+            "seed_demo.py",
+            "sweep_threshold.py",
+            "transactions.py",
+            "users.py",
+            "validate_dataset.py",
+        ],
+    ),
+    (
+        "lint",
+        [
+            "ruff",
+            "check",
+            "src",
+            "tests",
+            "analyse_failures.py",
+            "annotate.py",
+            "build_eval_subset.py",
+            "build_public_results.py",
+            "categorise.py",
+            "llm_smoke.py",
+            "review.py",
+            "run_agent_evaluation.py",
+            "run_operations_agent.py",
+            "run_evaluation.py",
+            "seed_demo.py",
+            "sweep_threshold.py",
+            "transactions.py",
+            "users.py",
+            "validate_dataset.py",
+        ],
+    ),
     ("types", ["mypy"]),
     ("architecture", ["lint-imports"]),
     ("tests", ["pytest"]),

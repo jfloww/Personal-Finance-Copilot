@@ -48,8 +48,8 @@ jobs:
 
       - name: Format and lint
         run: |
-          uv run ruff format --check src tests analyse_failures.py annotate.py build_eval_subset.py build_public_results.py categorise.py llm_smoke.py review.py run_evaluation.py seed_demo.py sweep_threshold.py transactions.py users.py validate_dataset.py
-          uv run ruff check src tests analyse_failures.py annotate.py build_eval_subset.py build_public_results.py categorise.py llm_smoke.py review.py run_evaluation.py seed_demo.py sweep_threshold.py transactions.py users.py validate_dataset.py
+          uv run ruff format --check src tests analyse_failures.py annotate.py build_eval_subset.py build_public_results.py categorise.py llm_smoke.py review.py run_agent_evaluation.py run_operations_agent.py run_evaluation.py seed_demo.py sweep_threshold.py transactions.py users.py validate_dataset.py
+          uv run ruff check src tests analyse_failures.py annotate.py build_eval_subset.py build_public_results.py categorise.py llm_smoke.py review.py run_agent_evaluation.py run_operations_agent.py run_evaluation.py seed_demo.py sweep_threshold.py transactions.py users.py validate_dataset.py
 
       - name: Type check
         run: uv run mypy

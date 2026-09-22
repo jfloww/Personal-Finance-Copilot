@@ -11,9 +11,11 @@ constants and nothing else.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
+from typing import Final
 
 from offerdelta.domain.common.evidence import Evidence
 from offerdelta.domain.common.location import Location
@@ -38,6 +40,9 @@ from offerdelta.domain.employment.work_schedule import WorkSchedule
 TAX_YEAR = 2026
 START = date(2026, 1, 1)
 MOVE_DATE = date(2026, 7, 1)
+
+AUBURN_CURRENT: Final = "auburn_current"
+NEW_JERSEY_CANDIDATE: Final = "new_jersey_candidate"
 
 
 @dataclass(frozen=True)
@@ -240,3 +245,22 @@ def new_jersey_candidate() -> ComparisonSide:
         costs=costs,
         household=HouseholdProfile.solo(),
     )
+
+
+#: The demo profiles are deliberately a closed, public set. Agent tools use
+#: these stable keys rather than labels (which are presentation copy and may
+#: change), and never reach stored profiles or transaction data.
+DEMO_PROFILE_FACTORIES: Final[dict[str, Callable[[], ComparisonSide]]] = {
+    AUBURN_CURRENT: auburn_current,
+    NEW_JERSEY_CANDIDATE: new_jersey_candidate,
+}
+
+
+def demo_profile(key: str) -> ComparisonSide:
+    """Return one fresh demo profile by its stable public key."""
+    try:
+        factory = DEMO_PROFILE_FACTORIES[key]
+    except KeyError as error:
+        known = ", ".join(sorted(DEMO_PROFILE_FACTORIES))
+        raise ValueError(f"unknown demo profile {key!r}; choose one of: {known}") from error
+    return factory()

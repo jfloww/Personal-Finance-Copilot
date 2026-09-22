@@ -1,7 +1,7 @@
 [project]
 name = "offerdelta"
 version = "0.1.0"
-description = "Personal Finance Copilot - deterministic finance engine with AI outside the calculation boundary"
+description = "MyFinSecretary: read-only transaction investigations with evidence and human-review proposals"
 requires-python = ">=3.12"
 
 # The domain layer stays standard-library only (blueprint section 10.1); the
@@ -10,6 +10,7 @@ dependencies = [
     "alembic>=1.13",
     "argon2-cffi>=23.1",
     "fastapi>=0.115",
+    "mcp>=2,<3",
     "psycopg[binary]>=3.2",
     "pydantic-settings>=2.4",
     "pyjwt>=2.9",
@@ -69,7 +70,7 @@ ignore = [
 [tool.ruff.lint.isort]
 # `tests` is our own code, so it sorts with `offerdelta` rather than being
 # mistaken for a third-party package.
-known-first-party = ["offerdelta", "tests", "annotate", "categorise", "review", "seed_demo", "sweep_threshold", "transactions", "users"]
+known-first-party = ["offerdelta", "tests", "annotate", "categorise", "review", "run_agent_evaluation", "run_operations_agent", "seed_demo", "sweep_threshold", "transactions", "users"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = [
@@ -85,14 +86,14 @@ strict = true
 warn_unreachable = true
 disallow_any_explicit = true
 plugins = ["pydantic.mypy"]
-files = ["src", "tests", "analyse_failures.py", "annotate.py", "build_eval_subset.py", "build_public_results.py", "categorise.py", "llm_smoke.py", "review.py", "run_evaluation.py", "seed_demo.py", "sweep_threshold.py", "transactions.py", "users.py", "validate_dataset.py"]
+files = ["src", "tests", "analyse_failures.py", "annotate.py", "build_eval_subset.py", "build_public_results.py", "categorise.py", "llm_smoke.py", "review.py", "run_agent_evaluation.py", "run_operations_agent.py", "run_evaluation.py", "seed_demo.py", "sweep_threshold.py", "transactions.py", "users.py", "validate_dataset.py"]
 
 # Pydantic's BaseModel and BaseSettings carry explicit Any in their own
 # signatures, and a wire or environment boundary deals in untyped input by
 # nature. The relaxation stops at those edges: the domain, where exactness is
 # the point, stays maximally strict.
 [[tool.mypy.overrides]]
-module = ["offerdelta.api.*", "offerdelta.config"]
+module = ["offerdelta.api.*", "offerdelta.config", "offerdelta.infrastructure.mcp.*"]
 disallow_any_explicit = false
 
 # ---------------------------------------------------------------- pytest
@@ -168,3 +169,14 @@ type = "forbidden"
 source_modules = ["offerdelta.api"]
 forbidden_modules = ["offerdelta.infrastructure.postgres.repositories"]
 allow_indirect_imports = "true"
+
+[[tool.importlinter.contracts]]
+name = "Agent tools stay transport neutral"
+type = "forbidden"
+source_modules = ["offerdelta.agent.tools"]
+forbidden_modules = [
+    "anthropic",
+    "mcp",
+    "offerdelta.infrastructure",
+    "offerdelta.api",
+]
