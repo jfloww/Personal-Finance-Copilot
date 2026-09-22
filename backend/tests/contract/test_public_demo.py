@@ -51,7 +51,7 @@ FORBIDDEN: Final = (
 )
 
 #: Every page the deployment serves.
-PAGES: Final = ("/", "/demo/comparison")
+PAGES: Final = ("/", "/demo/evaluation", "/demo/comparison")
 
 
 @pytest.fixture
@@ -89,18 +89,21 @@ def _strings(value: object) -> list[str]:
     return []
 
 
-def test_the_landing_page_is_the_evaluation_showcase(client: TestClient) -> None:
+def test_the_landing_page_is_my_fin_secretary(client: TestClient) -> None:
     body = client.get("/").text
-    assert "Personal Finance Copilot" in body
-    assert "/demo/evaluation/latest" in body
+    assert "MyFinSecretary" in body
+    assert "No real financial records" in body
+    assert client.get("/openapi.json").json()["info"]["title"] == "MyFinSecretary"
+    assert client.get("/demo/evaluation").status_code == 200
+    assert "/demo/evaluation/latest" in client.get("/demo/evaluation").text
 
 
-def test_the_landing_page_states_that_ingestion_is_disabled(client: TestClient) -> None:
+def test_the_landing_page_states_that_real_data_is_not_used(client: TestClient) -> None:
     """A recruiter reading this should not have to wonder whether real
     statements are one URL away. It says so, on the page, unprompted."""
     body = client.get("/").text.lower()
-    assert "public demo mode" in body
-    assert "real financial ingestion is disabled" in body
+    assert "public synthetic demo" in body
+    assert "no real financial records" in body
 
 
 def test_the_comparison_demo_is_still_reachable(client: TestClient) -> None:

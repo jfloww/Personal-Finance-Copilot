@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="MyFinSecretary investigates transaction exceptions with a tool trace, policy citation, and a human-approval boundary.">
+<title>MyFinSecretary — Transaction Investigation</title>
+<style>
+  :root{--surface:#f2f4f6;--panel:#fff;--ink:#12161a;--ink-2:#47525d;--ink-3:#78838e;--rule:#dfe4e9;--rule-strong:#c6ced6;--gain:#0f6baf;--loss:#b85a18;--assumed:#6b4e9e;--gain-wash:#0f6baf14;--loss-wash:#b85a1814}
+  @media(prefers-color-scheme:dark){:root{--surface:#121517;--panel:#191d20;--ink:#e9edf0;--ink-2:#a3aeb8;--ink-3:#78838e;--rule:#262c31;--rule-strong:#39424a;--gain:#3a8fd0;--loss:#d4762e;--assumed:#9070c4;--gain-wash:#3a8fd01f;--loss-wash:#d4762e1f}}
+  *{box-sizing:border-box}body{margin:0;padding:0 1.5rem 5rem;background:var(--surface);color:var(--ink);font:15px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}main{max-width:76rem;margin:auto}
+  .mono,.num,pre{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace}.num{font-variant-numeric:tabular-nums}header{padding:3.3rem 0 1.8rem;display:flex;justify-content:space-between;gap:1rem;align-items:start;flex-wrap:wrap}.route,.label{font-size:.72rem;color:var(--ink-3);text-transform:uppercase;letter-spacing:.1em}.route{margin:0 0 .5rem}h1{font-size:clamp(1.7rem,4vw,2.5rem);letter-spacing:-.03em;line-height:1.16;margin:0}p{margin:.5rem 0;color:var(--ink-2)}.links{display:flex;gap:.5rem;flex-wrap:wrap}a,button{font:inherit;color:var(--ink);background:var(--panel);border:1px solid var(--rule);border-radius:3px;padding:.48rem .72rem;text-decoration:none;cursor:pointer}a:hover,button:hover{border-color:var(--gain)}:focus-visible{outline:2px solid var(--gain);outline-offset:3px}button:disabled{opacity:.55;cursor:not-allowed}.notice{background:var(--panel);border-left:4px solid var(--assumed);border-radius:0 8px 8px 0;padding:.7rem 1rem;margin:1rem 0}.prompt{display:flex;gap:.55rem;flex-wrap:wrap;margin:1.1rem 0 2rem}.grid{display:grid;grid-template-columns:minmax(0,3fr) minmax(19rem,2fr);gap:2rem}.panel{background:var(--panel);border:1px solid var(--rule);border-radius:3px;padding:1.1rem 1.2rem}.section-title{font-size:.7rem;text-transform:uppercase;letter-spacing:.12em;color:var(--ink-3);border-bottom:1px solid var(--rule);padding-bottom:.5rem;margin:0 0 1rem}.block{margin-bottom:1.9rem}.lead{font-size:1.12rem;color:var(--ink);line-height:1.4}.metrics{display:grid;grid-template-columns:repeat(3,1fr);border:1px solid var(--rule);background:var(--rule);gap:1px;margin-top:1rem}.metric{background:var(--panel);padding:.9rem}.metric small{display:block;color:var(--ink-3)}.metric strong{display:block;font-size:1.15rem;margin:.3rem 0}.risk{color:var(--loss)}.good{color:var(--gain)}.policy{color:var(--assumed)}.row{display:flex;justify-content:space-between;gap:1rem;align-items:baseline;padding:.45rem 0;border-bottom:1px solid var(--rule)}.row:last-child{border:0}.status{background:var(--gain-wash);border:1px solid var(--gain);color:var(--gain);padding:.65rem;margin-top:1rem}.trace details{border:1px solid var(--rule);margin:.45rem 0;border-radius:3px}.trace summary{padding:.65rem .75rem;cursor:pointer;display:flex;justify-content:space-between;gap:.5rem}.trace pre{border-top:1px solid var(--rule);margin:0;background:var(--surface);padding:.85rem;font-size:.73rem;white-space:pre;overflow:auto;max-height:19rem}.sub{font-size:.78rem;color:var(--ink-3)}.proofs{display:grid;grid-template-columns:1fr 1fr;gap:1.2rem;margin-top:1.8rem}.error{color:var(--loss)}.hidden{display:none}footer{font-size:.8rem;margin-top:2rem;border-top:1px solid var(--rule);padding-top:.8rem}@media(max-width:52rem){.grid,.proofs{grid-template-columns:1fr}.metrics{grid-template-columns:1fr 1fr}header{padding-top:2rem}}@media(max-width:30rem){.metrics{grid-template-columns:1fr}}@media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;transition:none!important}}
+  button[aria-pressed="true"]{border-color:var(--gain);background:var(--gain-wash)}
+</style>
+</head>
+<body><main>
+<header><div><p class="route mono">TRANSACTION INVESTIGATION · /demo/agent</p><h1>MyFinSecretary</h1><p>Your finance assistant for investigating unusual transactions, citing policy, and preparing human review.</p></div><nav class="links" aria-label="Project links"><a href="/demo/evaluation" id="evaluation-link">Historical evaluation</a><a href="/docs" id="api-link">API</a><a href="#mcp" id="mcp-link">MCP</a></nav></header>
+<div class="notice"><strong>Public synthetic demo.</strong> <span class="sub">Choose a bundled sample; no financial uploads are accepted. Scripted tool sequence, not a live AI model. No real financial records, ledger writes, or persisted review cases.</span></div>
+<div class="prompt"><button data-scenario="august_software_exceptions" type="button">Sample A · Software spend</button><button data-scenario="alternate_billing_review" type="button">Sample B · Billing review</button></div>
+<p id="loading" role="status" aria-live="polite">Ready to investigate the synthetic ledger.</p>
+<div id="results" class="grid hidden">
+  <div><section class="block"><h2 class="section-title">Investigation summary</h2><div class="panel"><p class="lead">August spend rose by <strong class="risk num" id="change"></strong>. Compare the drivers and inspect the same-merchant charge pair below.</p><div class="metrics"><div class="metric"><small>July spend</small><strong class="num" id="prior"></strong></div><div class="metric"><small>August spend</small><strong class="num" id="total"></strong></div><div class="metric"><small>Difference</small><strong class="num risk" id="delta"></strong></div></div><h3 class="section-title" style="margin-top:1.2rem">Reconciled spend drivers</h3><div id="drivers"></div></div></section>
+  <section class="block"><h2 class="section-title">Exception awaiting review</h2><div class="panel"><div class="row"><strong id="duplicate-head">Possible duplicate charge</strong><strong class="risk">Needs review</strong></div><p class="mono sub" id="transaction-ids"></p><p id="duplicate-evidence"></p><p class="policy" id="policy-summary"></p><p class="sub" id="policy-source"></p><div class="status"><strong>Awaiting human approval</strong><div class="sub">Proposal only · No ledger or review-queue changes made</div></div></div></section></div>
+  <section class="block trace"><h2 class="section-title">Tool trace · scripted sequence</h2><div class="panel" id="trace" aria-label="Structured tool call trace"></div></section>
+</div>
+<div class="proofs"><section class="panel"><h2 class="section-title">Policy evidence</h2><p>Versioned synthetic policy excerpt with a source and section. Lookup is deterministic keyword retrieval, <strong>not vector RAG</strong>.</p><p class="mono sub">POL-PROC-04 · section 2.1 · demo-1</p></section><section id="mcp" class="panel"><h2 class="section-title">MCP &amp; evaluation</h2><p>Six read-only investigation tools over synthetic transactions. No destructive tools. The historical 28-task offer-tool scripted oracle validates its harness, <strong>not this agent's live-model performance</strong>.</p><p class="sub">Official MCP SDK · stdio · no production data connection</p></section></div>
+<footer>Legacy offer-comparison proof remains available at <a href="/demo/comparison" id="legacy-link">the comparison demo</a>. This workbench is the new product direction.</footer>
+</main>
+<script>
+'use strict';
+const byId = id => document.getElementById(id);
+function money(raw) {
+  if (typeof raw !== 'string' || !/^-?\d+(?:\.\d+)?$/.test(raw)) return 'Unavailable';
+  const [integer, fraction=''] = raw.replace('-', '').split('.');
+  const grouped = integer.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  return `${raw.startsWith('-') ? '-' : ''}$${grouped}.${(fraction+'00').slice(0,2)}`;
+}
+function set(id,value){byId(id).textContent=value}
+function render(data){
+  const s=data.summary, d=data.duplicate, p=data.policy_citations[0];
+  set('change',money(s.change));set('prior',money(s.prior_spend));set('total',money(s.total_spend));
+  set('delta',money(s.change));set('duplicate-head',`Possible duplicate · ${d.merchant}`);
+  const drivers=byId('drivers');drivers.replaceChildren();
+  for(const driver of s.drivers){const row=document.createElement('div'),name=document.createElement('span'),amount=document.createElement('strong');row.className='row';name.textContent=driver.merchant;amount.className='num';amount.textContent=money(driver.change);row.append(name,amount);drivers.append(row)}
+  set('transaction-ids',d.transaction_ids.join(' · '));
+  set('duplicate-evidence',`${d.merchant}: two ${money(d.amount_each)} charges ${d.minutes_apart} minutes apart. This is a candidate, not proof of duplicate payment.`);
+  set('policy-summary',p.text);set('policy-source',`${p.id} · ${p.version} · §${p.section} · ${p.source}`);
+  const trace=byId('trace');trace.replaceChildren();
+  for(const step of data.trace){
+    const details=document.createElement('details'), summary=document.createElement('summary');
+    const name=document.createElement('strong'), state=document.createElement('span'), raw=document.createElement('pre');
+    name.className='mono';name.textContent=step.tool;state.className='sub';state.textContent=step.tool==='propose_review_case'?'proposal only':step.result.ok?'success':'error';
+    raw.textContent=JSON.stringify({arguments:step.arguments,result:step.result},null,2);
+    summary.append(name,state);details.append(summary,raw);trace.append(details);
+  }
+  for(const button of document.querySelectorAll('[data-scenario]'))button.setAttribute('aria-pressed',String(button.dataset.scenario===data.scenario));
+  byId('results').classList.remove('hidden');set('loading',`Investigation complete · ${data.scenario} · no records changed`);
+}
+async function run(scenario){
+  const buttons=document.querySelectorAll('[data-scenario]');for(const button of buttons)button.disabled=true;
+  set('loading','Investigating synthetic transactions…');
+  try{const response=await fetch('/v1/demo/agent/run',{method:'POST',headers:{accept:'application/json','content-type':'application/json'},body:JSON.stringify({scenario})});
+    if(!response.ok)throw new Error(`HTTP ${response.status}`);
+    const data=await response.json();if(!data.synthetic||data.mode!=='scripted_demo_not_live_model'||data.ledger_mutated||data.review_queue_mutated||!data.duplicate||!data.proposal)throw new Error('Unexpected safety state');
+    render(data);
+  }catch(error){set('loading',`Investigation unavailable: ${error.message}`);byId('loading').classList.add('error')}
+  finally{for(const button of buttons)button.disabled=false}
+}
+for(const button of document.querySelectorAll('[data-scenario]'))button.addEventListener('click',()=>run(button.dataset.scenario));
+run('august_software_exceptions');
+</script>
+</body></html>

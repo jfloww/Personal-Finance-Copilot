@@ -16,12 +16,20 @@ library version might change.
 from __future__ import annotations
 
 from datetime import date
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from offerdelta.application.reports.monthly import MonthCoverage, MonthlyReport
 from offerdelta.domain.common.derivation import DerivationNode
 from offerdelta.evaluation.labels import ABSTAIN, LABEL_SPACE
+
+
+class DemoInvestigationRequest(BaseModel):
+    """Only bundled synthetic CSV scenarios are exposed; arbitrary queries are not accepted."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    scenario: Literal["august_software_exceptions", "alternate_billing_review"]
 
 
 class DerivationNodeSchema(BaseModel):
