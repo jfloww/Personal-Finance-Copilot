@@ -103,6 +103,9 @@ def test_duplicate_tool_call_ids_are_rejected() -> None:
 
     run = AgentRuntime(provider, InProcessToolSource(build_tool_registry())).run("Both")
 
-    assert len(run.tool_calls) == 1
+    assert len(run.tool_calls) == 2
+    assert run.tool_calls[0].result.ok
+    assert not run.tool_calls[1].result.ok
+    assert run.tool_calls[1].result.error == "tool call ids must be non-empty and unique"
     tool_results = provider.requests[1][-1].content
     assert len(tool_results) == 2
