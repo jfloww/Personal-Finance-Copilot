@@ -18,12 +18,11 @@ from tests.integration.conftest import requires_database
 pytestmark = requires_database
 
 
-def _seed(scope: TenantScope, amount: str, when: date) -> uuid.UUID:
-    account = AccountRepository(scope).register("Checking")
+def _seed(scope: TenantScope, account_key: str, amount: str, when: date) -> uuid.UUID:
     outcome = enter_transaction(
         scope,
         ManualEntry(
-            account_key=account.key,
+            account_key=account_key,
             posted_on=when,
             description="STORE",
             amount=Money.parse(amount),
@@ -38,9 +37,11 @@ def _seed(scope: TenantScope, amount: str, when: date) -> uuid.UUID:
 def test_registry_is_bound_to_one_tenant_and_does_not_write(
     scope: TenantScope, other_scope: TenantScope, session: Session
 ) -> None:
-    previous_id = _seed(scope, "-2.00", date(2026, 2, 5))
-    current_id = _seed(scope, "-5.00", date(2026, 3, 5))
-    other_id = _seed(other_scope, "-99.00", date(2026, 3, 5))
+    account = AccountRepository(scope).register("Checking")
+    other_account = AccountRepository(other_scope).register("Checking")
+    previous_id = _seed(scope, account.key, "-2.00", date(2026, 2, 5))
+    current_id = _seed(scope, account.key, "-5.00", date(2026, 3, 5))
+    other_id = _seed(other_scope, other_account.key, "-99.00", date(2026, 3, 5))
     session.flush()
 
     registry = build_tenant_spend_registry(scope)
