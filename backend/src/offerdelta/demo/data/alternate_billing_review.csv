@@ -1,0 +1,7 @@
+id,posted_on,posted_time,merchant,category,amount,receipt
+ALT-JUL-01,2026-07-12,10:00,Observability Cloud,Software,3500.00,true
+ALT-JUL-02,2026-07-14,11:00,Team Chat,Software,1500.00,true
+ALT-AUG-01,2026-08-12,10:00,Observability Cloud,Software,3500.00,true
+ALT-AUG-02,2026-08-12,10:03,Observability Cloud,Software,3500.00,false
+ALT-AUG-03,2026-08-14,11:00,Team Chat,Software,1500.00,true
+ALT-AUG-04,2026-08-20,12:00,Compliance Renewal,Software,2000.00,true

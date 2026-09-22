@@ -43,6 +43,10 @@ class Settings(BaseSettings):
     #: run without editing code. Left as None to take the client's default.
     anthropic_model: str | None = Field(default=None, alias="ANTHROPIC_MODEL")
 
+    #: Kept separate because agent tool selection and bulk categorisation are
+    #: different workloads and should not silently share a cost decision.
+    agent_model: str | None = Field(default=None, alias="AGENT_MODEL")
+
     #: Signing key for access tokens. Unlike the Anthropic key above, this is
     #: not an external credential that costs money and cannot be faked - it is
     #: an arbitrary self-issued string, the same kind of thing as the

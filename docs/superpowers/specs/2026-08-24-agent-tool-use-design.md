@@ -1,7 +1,7 @@
 # Agent, MCP, and tool-use evaluation — design
 
 **Date:** 2026-08-24
-**Status:** approved for planning
+**Status:** implemented; live model benchmark and public aggregate are pending
 **Scope:** V3. Builds on the V2 categorisation benchmark; changes nothing in it.
 
 ---
