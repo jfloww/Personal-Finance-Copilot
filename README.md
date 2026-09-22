@@ -1,23 +1,74 @@
-# Personal Finance Copilot
+# MyFinSecretary
 
-Turns a bank export into decisions you can audit. It imports real transactions, categorises them,
-and runs them through a deterministic engine that answers questions about money — including what a
-job offer in another city would actually be worth.
+An auditable transaction-investigation assistant for finance-operations teams. It explains
+spend changes, flags possible duplicate charges, cites a review policy, and prepares a
+**proposal for a human**. The public demo never writes to a ledger or review queue.
 
-The organising constraint: **the AI never touches the arithmetic.** A language model helps with the
-one genuinely fuzzy problem — deciding that `SQ *BLUE BOTTLE #417` is a coffee — and its answer is
-validated against a closed taxonomy before it reaches anything. Every figure downstream is computed
-in exact decimal arithmetic by code that can show its work.
+> **What is live?** The browser runs a deterministic investigation over two bundled,
+> synthetic datasets. It calls six read-only tools but does **not** call an LLM. The optional
+> local agent can call an Anthropic model after explicit confirmation; that path has not been
+> deployed or benchmarked. Policy lookup is keyword retrieval, **not production RAG**.
 
-**Live demo: [offerdelta.onrender.com](https://offerdelta.onrender.com)** ([why that
-URL](#a-note-on-naming))
+## Try the current demo
 
-Hosted on Render's free plan, so the first request after a quiet period takes about 30 seconds
-while the service wakes.
+```bash
+cd backend
+uv sync
+uv run uvicorn --app-dir src offerdelta.api.main:app --reload
+```
+
+Open `http://127.0.0.1:8000/` and switch between **Sample A** and **Sample B**.
+Sample A explains a $12,500 increase; Sample B parses a bundled CSV and explains a different
+$5,500 increase. Expand the tool trace to inspect every call and its result. No API key or
+database is needed. See the [two-minute interview walkthrough](docs/PORTFOLIO-DEMO.md).
+
+The MyFinSecretary workbench has not been deployed yet. Verify that a public URL serves these
+two scenarios before using it in an application.
+
+## Why this is a backend project
+
+| Concern | What this repository demonstrates |
+| --- | --- |
+| Exact financial calculations | `Decimal` arithmetic and decimal strings across HTTP; merchant drivers reconcile to the spend delta. |
+| Bounded tool use | Six validated read-only operations tools, an auditable runtime, and an MCP stdio adapter. |
+| Safety boundary | Duplicate charges are candidates, not automatic reversals; proposals are unpersisted and require human review. |
+| Data isolation | The public workbench only exposes allowlisted synthetic cases. Existing authenticated transaction APIs use tenant-scoped repositories. |
+| Verification | Unit, contract, property, and database integration tests; the latest integration run still needs CI/PostgreSQL confirmation. |
+
+```text
+bundled synthetic transactions ─▶ search / spend / duplicate tools ─▶ spend drivers + exception
+synthetic policy excerpt ────────▶ cited keyword lookup ──────────▶ review requirement
+                                                                │
+                                                                ▼
+                                                 unpersisted review proposal
+                                                 (no approval executor or ledger write)
+```
+
+The same investigation code handles both datasets; Sample B is loaded from
+[`alternate_billing_review.csv`](backend/src/offerdelta/demo/data/alternate_billing_review.csv).
+The API offers only `august_software_exceptions` and `alternate_billing_review` at
+`POST /v1/demo/agent/run`. It accepts no visitor uploads or arbitrary prompts.
+
+## What is not finished
+
+- No real tenant-data operations agent, approval executor, or production policy RAG.
+- No held-out evaluation of the live operations agent. Historical categorisation and offer-tool
+  results below measure earlier work, **not** this product's agent accuracy.
+- New code must be merged, pass CI with PostgreSQL, and be deployed before a public link can
+  be presented as the current demo.
+
+The original job-offer comparison and transaction-categorisation research remain in this
+repository for reproducibility. Their technical detail starts below.
 
 ---
 
-## The problem
+## Legacy research and offer-comparison prototype
+
+The sections below document the original personal-finance/offer-comparison implementation and
+historical measurements. They are preserved for reproducibility, not presented as transaction-
+operations results.
+
+### Original problem
 
 Personal finance tools are good at showing you the past and bad at answering questions about the
 future. "You spent $612 on dining last month" is a fact. "Would moving to Jersey City for a
@@ -263,6 +314,78 @@ deployment serves is [docs/eval/public-results.json](docs/eval/public-results.js
   design, so it can no longer measure what a truly untouched split would.
 - **One annotator**, adjudicating their own double pass. Agreement is measured but not independent.
 
+## Agent tools and MCP
+
+The **default MCP server now exposes six read-only synthetic transaction-operations tools**:
+`search_transactions`, `summarize_spend`, `detect_duplicates`, `retrieve_policy`,
+`get_transaction_context`, and `propose_review_case`. The last computes an unpersisted proposal,
+never a ledger or queue mutation. The public API returns structured evidence at
+`GET /v1/demo/agent/investigation` or `POST /v1/demo/agent/run` with scenario
+`august_software_exceptions` or `alternate_billing_review`. Arbitrary prompts, visitor uploads,
+and tenant data are not exposed on these routes.
+
+A local opt-in live-model path uses the same six tools through the bounded agent runtime:
+
+```bash
+cd backend
+PYTHONPATH=src uv run python run_operations_agent.py          # free scripted investigation
+PYTHONPATH=src uv run python run_operations_agent.py --live   # requires API key and confirms cost
+```
+
+The live run is not deployed, scored, or claimed as product performance. It only sees the same
+synthetic ledger and cannot execute a write.
+
+The historical comparison engine is also exposed in code as six read-only tools: profile discovery,
+offer comparison, component explanation, break-even, equivalent salary, and negotiation gap. One
+canonical registry owns every name, description, strict JSON Schema, and implementation. An
+in-process agent and the MCP server consume that same registry; neither generates a second schema.
+
+```text
+deterministic engine
+        ▲
+        │
+typed tool registry ──▶ in-process single-agent loop
+        │
+        └─────────────▶ MCP stdio server
+```
+
+The MCP adapter uses the official Python SDK's low-level server so it can publish the registry's
+hand-written schemas byte for byte. A contract test connects with a real MCP client and proves that
+the advertised names, descriptions, schemas, error semantics, and results match in-process calls.
+The historical comparison tools operate over demo profiles. The MCP default is now the synthetic
+operations registry; neither registry can reach accounts, stored transactions, or the database.
+
+The agent runtime is deliberately one bounded loop, not a multi-agent graph. It rejects malformed
+arguments, duplicate call ids, unknown tools, provider failures, and turn-limit exhaustion without
+inventing a financial answer. Every run records a typed transcript, tool results, token usage, and
+latency while keeping exceptions and credentials out of model context.
+
+### Historical offer-tool agent evaluation
+
+The legacy offer-tool keyless path runs a scripted oracle over 28 authored tasks: 8 single-tool, 6 multi-tool, 6
+distractor, 4 out-of-scope, and 4 fault-injected. It validates the harness and is labelled
+`scripted-oracle(not-a-score)` everywhere; it is not presented as model performance.
+
+```bash
+cd backend
+uv run python run_agent_evaluation.py          # free, scripted harness validation
+uv run python run_agent_evaluation.py --live   # real model; confirms before spending
+```
+
+The report measures tool-selection precision and recall, exact argument accuracy, numeric
+grounding, answers containing a fabricated number, and abstention under tool error, empty result,
+and refusal. Gold results are computed by calling the engine, never typed into the task set. Live
+results are not published until a complete run exists; an absent score is not replaced with the
+scripted oracle's perfect one. This is not an operations-agent score; a separate operations
+benchmark has not been run.
+
+Run the MCP server over stdio:
+
+```bash
+cd backend
+uv run python -m offerdelta.infrastructure.mcp.server
+```
+
 ## Privacy and handling
 
 This project reads someone's actual bank history, which sets the bar.
@@ -310,9 +433,12 @@ Requires Python 3.12 and [uv](https://docs.astral.sh/uv/).
 ```bash
 cd backend
 uv sync
-uv run python check.py     # format, lint, types, architecture boundaries, tests — one command
-uv run uvicorn offerdelta.api.main:app --reload
+PYTHONPATH=src uv run python check.py     # format, lint, types, architecture boundaries, tests
+uv run uvicorn --app-dir src offerdelta.api.main:app --reload
 ```
+
+`--app-dir src` makes the source package importable even when macOS marks the
+virtual environment's editable-install `.pth` file as hidden (Python then ignores it).
 
 That is enough to run everything, including the full test suite. **No API key and no database are
 needed** — the LLM client is tested through an injected transport, and database-backed tests skip
@@ -327,6 +453,7 @@ Both live in `backend/.env`, which is gitignored:
 | `CONNECTION_STRING` | PostgreSQL DSN. Database-backed tests skip; persistence is unavailable. |
 | `ANTHROPIC_API_KEY` | LLM categorisation is unavailable; rules and the harness still run. |
 | `ANTHROPIC_MODEL` | Defaults to `claude-sonnet-5`. The published benchmark ran `claude-haiku-4-5`. |
+| `AGENT_MODEL` | Defaults to `claude-opus-5`; affects local live agent evaluation only. |
 
 ```bash
 uv run alembic upgrade head        # apply migrations, if a DSN is set
@@ -342,6 +469,10 @@ uv run python llm_smoke.py                      # inspect the exact request, off
 uv run python llm_smoke.py --live               # one real API call; needs a key
 uv run python run_evaluation.py                 # rules vs LLM vs hybrid, stand-in provider
 uv run python run_evaluation.py --live --save-predictions   # the benchmark; costs money
+uv run python run_agent_evaluation.py           # agent/MCP harness, scripted and free
+uv run python run_agent_evaluation.py --live    # 28-task live agent evaluation
+PYTHONPATH=src uv run python run_operations_agent.py           # new synthetic operations demo, no key
+PYTHONPATH=src uv run python run_operations_agent.py --live    # opt-in model + operations tools
 uv run python analyse_failures.py <predictions.jsonl>       # sanitized failure analysis
 uv run python build_public_results.py           # aggregate artifact for the public deployment
 ```
@@ -420,25 +551,25 @@ backend/src/offerdelta/
   api/             HTTP surface — the only layer that knows FastAPI exists
   ingest/          CSV mapping detection, date-order inference, preview and commit planning
   evaluation/      dataset, splitting, metrics, rule baseline, LLM, hybrid, report
-  infrastructure/  postgres, llm client (transport, retry, structured output)
+  agent/           typed tools, bounded single-agent runtime, transcript
+  infrastructure/  postgres, LLM clients, MCP adapter
 docs/BLUEPRINT.md              full design and decision log
 docs/LIVE-VALIDATION.md        turning on live inference safely
 docs/status/                   dated progress notes and the running TODO
 docs/planning/PHASE-1-SCOPE.md scope contract
 ```
 
-1006 tests. Lint, types, architecture boundaries, and tests run in one command and in CI.
+Lint, strict types, six architecture boundaries, and the full test suite run in one command and in
+CI.
 
 ## A note on naming
 
-**The product is the Personal Finance Copilot. The Python package is still `offerdelta`, and the
-deployed URL is still `offerdelta.onrender.com`. That is deliberate.**
+**The product is MyFinSecretary, a transaction-investigation assistant for finance teams.** The Python package and deployment
+remain `offerdelta` for now; they identify the earlier technical prototype, not the new scope.
 
-The project began as a job-offer comparison tool and grew outward: importing real transactions to
-answer the offer question turned out to be the larger and more interesting problem, and the offer
-comparison became one scenario the engine answers rather than the whole product. The taxonomy still
-shows its origins — `RELOCATION_*` and `COMMUTE_*` exist because the engine answers relocation
-questions.
+The project began as a job-offer comparison tool. The taxonomy still shows its origins —
+`RELOCATION_*` and `COMMUTE_*` are historical. They should not be presented as a purpose-built
+accounts-payable taxonomy or as validated policy categories.
 
 Renaming the package would touch every import in the codebase, the Alembic configuration, the
 Render service definition, and the live demo URL that this README links to. It would change no
@@ -459,12 +590,20 @@ Stated plainly, because a portfolio that only lists strengths is not evidence of
   cannot overlap; a few hundred transactions are classified serially. The transport is a port, so an
   async adapter is a contained change — deferred until batch throughput is a measured problem rather
   than an assumed one.
-- **No retrieval or embeddings.** Nothing in the product currently needs them.
+- **No production policy RAG.** The workbench uses a single versioned synthetic excerpt and keyword
+  lookup. Tenant-isolated document ingestion, versioning, retrieval evaluation, and citations to
+  real policies are future work.
+- **No tenant-data operations agent or approval executor.** The public scenarios read two bundled
+  synthetic ledgers and return unpersisted proposals. The old transaction API and tenant
+  isolation exist, but have not been wired into the six operations tools. The workbench's scripted
+  trace is not live model autonomy; operations-agent eval and live deployment are pending.
 - **No input forms.** Profiles are constructed in code or loaded from CSV; a non-developer cannot
   yet complete the flow end to end.
 - **The demo uses placeholder figures.** They are marked `ASSUMED` and are not anyone's real
   salary.
-- **Single user, no authentication.** There are no accounts and no authorisation model.
+- **The public deployment remains demo-only.** Authentication and tenant-isolated persistence exist
+  for configured deployments, but Render has no database, signing key, or model key, so those routes
+  are intentionally unavailable there.
 - **Testcontainers integration tests are unexercised** on this machine — Docker is not installed
   locally, so that path runs only in CI.
 
