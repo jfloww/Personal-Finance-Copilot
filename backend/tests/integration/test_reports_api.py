@@ -102,6 +102,10 @@ def test_reports_monthly_requires_a_token(client: TestClient) -> None:
     assert client.get("/v1/reports/monthly/2026-03").status_code == 401
 
 
+def test_observed_debits_requires_a_token(client: TestClient) -> None:
+    assert client.get("/v1/reports/observed-debits/2026-03").status_code == 401
+
+
 def test_review_queue_requires_a_token(client: TestClient) -> None:
     assert client.get("/v1/review-queue").status_code == 401
 
@@ -186,6 +190,34 @@ def test_a_tenant_never_sees_another_tenants_rows_in_their_report(
     body = response.json()
     assert body["coverage"]["rows"] == 1
     assert body["tree"]["amount"] == "-5.00"
+
+
+def test_observed_debits_compares_only_this_tenants_rows(
+    client: TestClient, token_a: str, scope_a: TenantScope, other_scope: TenantScope
+) -> None:
+    _seed(scope_a, [("2026-02-05", "-10.10"), ("2026-03-05", "-12.35")])
+    _seed(other_scope, [("2026-03-05", "-999.00")])
+
+    response = client.get("/v1/reports/observed-debits/2026-03", headers=_auth(token_a))
+    assert response.status_code == 200
+    body = response.json()
+    _no_floats(body)
+    assert body["previous_coverage"]["rows"] == 1
+    assert body["current_coverage"]["rows"] == 1
+    assert body["previous_coverage"]["complete"] is False
+    assert body["current_coverage"]["complete"] is False
+    assert body["currencies"][0]["previous"] == "10.10"
+    assert body["currencies"][0]["current"] == "12.35"
+    assert body["currencies"][0]["delta"] == "2.25"
+    assert "transfers" in body["caveat"]
+
+
+@pytest.mark.parametrize("month", ["not-a-month", "2026-13", "0001-01"])
+def test_observed_debits_rejects_invalid_or_uncomparable_month(
+    client: TestClient, token_a: str, month: str
+) -> None:
+    response = client.get(f"/v1/reports/observed-debits/{month}", headers=_auth(token_a))
+    assert response.status_code == 422
 
 
 # ---------------------------------------------------------------- GET /v1/review-queue
