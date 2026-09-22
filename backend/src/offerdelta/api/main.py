@@ -1,11 +1,4 @@
-"""The walking skeleton's HTTP surface.
-
-One calculated figure, its full derivation, and the health endpoints a hosted
-service needs. Deliberately small: this exists to prove the deployment path and
-the money-serialisation boundary while both are still trivial to debug.
-
-The real API arrives in milestone 5.
-"""
+"""Public synthetic investigations, historical demonstrations, and protected APIs."""
 
 from __future__ import annotations
 
@@ -24,11 +17,13 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from offerdelta.agent.tools.registry import JsonValue
 from offerdelta.api.presenters import present_comparison
 from offerdelta.api.rate_limit import FixedWindowLimiter
 from offerdelta.api.schemas import (
     ComparisonRequest,
     ComparisonSchema,
+    DemoInvestigationRequest,
     DerivationNodeSchema,
     HealthSchema,
     LabelConfirmationSchema,
@@ -46,6 +41,7 @@ from offerdelta.application.auth import authenticate, load_active_user
 from offerdelta.application.idempotency import IdempotencyOutcome, IdempotencyService
 from offerdelta.application.queries.get_demo_comparison import get_demo_comparison
 from offerdelta.application.queries.get_demo_derivation import get_demo_derivation
+from offerdelta.application.queries.operations_demo import investigate_demo
 from offerdelta.application.reports.monthly import available_months, monthly_report
 from offerdelta.application.reports.review import REVIEW_THRESHOLD, confirm, queue
 from offerdelta.application.scope import TenantScope
@@ -80,15 +76,15 @@ _EVALUATION = _STATIC / "evaluation.json"
 _idempotency = IdempotencyService(InMemoryIdempotencyStore())
 
 app = FastAPI(
-    title="Personal Finance Copilot",
-    summary="Deterministic personal-finance engine with AI kept outside the calculation boundary",
+    title="MyFinSecretary",
+    summary="Synthetic read-only transaction investigations and approval-gated design",
     description=(
-        "**This deployment runs in public demo mode.** Real financial ingestion "
-        "is disabled here by design: no database is attached, the transaction "
-        "endpoints are not registered, and no model API key is present. The "
-        "demo routes below compute from fixed in-memory profiles.\n\n"
+        "**Public demo mode: the agent demonstration uses synthetic in-memory transactions only.** "
+        "It executes a fixed scripted tool sequence, not a live model. Policy lookup is "
+        "deterministic keyword search, not vector RAG. Review proposals do not mutate a ledger "
+        "or queue. Database-backed routes, when configured, are separately authenticated.\n\n"
         "`/demo/evaluation/latest` publishes aggregate results from evaluation "
-        "runs performed locally against real statements. It carries counts and "
+        "runs performed locally for the legacy categorisation research. It carries counts and "
         "rates only - no transactions, amounts, merchants, dates, or per-row "
         "predictions."
     ),
@@ -105,7 +101,13 @@ def _package_version() -> str:
 
 @app.get("/", include_in_schema=False)
 def index() -> FileResponse:
-    """The evaluation showcase: what was measured, and which prompt it selected."""
+    """Product-first public landing page; the old evaluation remains reachable."""
+    return FileResponse(_STATIC / "agent.html")
+
+
+@app.get("/demo/evaluation", include_in_schema=False)
+def evaluation_page() -> FileResponse:
+    """The historical categorisation evaluation showcase."""
     return FileResponse(_STATIC / "index.html")
 
 
@@ -118,6 +120,24 @@ def comparison_page() -> FileResponse:
     double, so what it prints is what the engine computed.
     """
     return FileResponse(_STATIC / "comparison.html")
+
+
+@app.get("/demo/agent", include_in_schema=False)
+def operations_workbench() -> FileResponse:
+    """Public transaction-operations investigation over synthetic data only."""
+    return FileResponse(_STATIC / "agent.html")
+
+
+@app.get("/v1/demo/agent/investigation")
+def demo_investigation() -> dict[str, JsonValue]:
+    """Scripted, reproducible investigation. Not a live model result or ledger write."""
+    return investigate_demo()
+
+
+@app.post("/v1/demo/agent/run")
+def run_demo_investigation(_request: DemoInvestigationRequest) -> dict[str, JsonValue]:
+    """Run a bundled read-only scenario, never an unrestricted live-model prompt."""
+    return investigate_demo(_request.scenario)
 
 
 @lru_cache(maxsize=1)
