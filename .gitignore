@@ -50,3 +50,6 @@ statements/
 
 # Subagent-driven-development scratch: ledgers, briefs, review packages.
 .superpowers/
+
+# Local design drafts and remote-preview metadata are not part of the shipped app.
+.superdesign/
