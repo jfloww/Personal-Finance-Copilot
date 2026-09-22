@@ -64,6 +64,13 @@ debits are disclosed separately, while suggested labels and incomplete import
 windows remain explicit limitations. This is deterministic, read-only analysis;
 it does not invoke an agent or claim a duplicate charge.
 
+The same classified calculation is available to a request-scoped,
+`explain_spend_change` read-only agent tool. Its only input is a month; the
+authenticated tenant is bound when the tool is created. The tool bounds its
+merchant and transaction-ID output, preserving the remaining delta as an
+explicit `other_delta`. It is not in the public synthetic tool registry, and
+no live tenant-data agent or model route is deployed yet.
+
 ## What is not finished
 
 - No real tenant-data operations agent, approval executor, or production policy RAG.
