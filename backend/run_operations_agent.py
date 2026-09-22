@@ -12,7 +12,13 @@ from __future__ import annotations
 import argparse
 import json
 
-from offerdelta.agent.runtime import OPERATIONS_SYSTEM_PROMPT, AgentRuntime, InProcessToolSource
+from offerdelta.agent.runtime import (
+    OPERATIONS_PROVIDER_FAILURE_TEXT,
+    OPERATIONS_SYSTEM_PROMPT,
+    OPERATIONS_TURN_LIMIT_TEXT,
+    AgentRuntime,
+    InProcessToolSource,
+)
 from offerdelta.agent.tools.operations import build_operations_registry
 from offerdelta.application.queries.operations_demo import QUESTION, investigate_demo
 from offerdelta.infrastructure.llm.factory import build_agent_provider
@@ -62,6 +68,8 @@ def main(argv: list[str] | None = None) -> int:
         provider,
         InProcessToolSource(build_operations_registry()),
         system_prompt=OPERATIONS_SYSTEM_PROMPT,
+        provider_failure_text=OPERATIONS_PROVIDER_FAILURE_TEXT,
+        turn_limit_text=OPERATIONS_TURN_LIMIT_TEXT,
     ).run(QUESTION)
     print(result.final_text)
     print(

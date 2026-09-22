@@ -41,6 +41,14 @@ TURN_LIMIT_TEXT: Final = (
     "I couldn't complete the comparison within the tool-call limit. "
     "I won't estimate a financial result."
 )
+OPERATIONS_PROVIDER_FAILURE_TEXT: Final = (
+    "I couldn't complete the transaction investigation because the model provider failed. "
+    "I won't invent a finding."
+)
+OPERATIONS_TURN_LIMIT_TEXT: Final = (
+    "I couldn't complete the transaction investigation within the tool-call limit. "
+    "I won't invent a finding."
+)
 
 
 class AgentProvider(Protocol):
@@ -108,6 +116,8 @@ class AgentRuntime:
     tools: ToolSource
     max_model_turns: int = 8
     system_prompt: str = SYSTEM_PROMPT
+    provider_failure_text: str = PROVIDER_FAILURE_TEXT
+    turn_limit_text: str = TURN_LIMIT_TEXT
 
     def run(self, question: str) -> AgentRun:
         if not question.strip():
@@ -134,7 +144,7 @@ class AgentRuntime:
             except Exception:
                 return AgentRun(
                     question=question,
-                    final_text=PROVIDER_FAILURE_TEXT,
+                    final_text=self.provider_failure_text,
                     messages=tuple(messages),
                     tool_calls=tuple(records),
                     model_calls=model_call,
@@ -178,7 +188,7 @@ class AgentRuntime:
 
         return AgentRun(
             question=question,
-            final_text=TURN_LIMIT_TEXT,
+            final_text=self.turn_limit_text,
             messages=tuple(messages),
             tool_calls=tuple(records),
             model_calls=self.max_model_turns,
@@ -194,11 +204,21 @@ class AgentRuntime:
         seen_call_ids: set[str],
         records: list[ToolCallRecord],
     ) -> ToolResult:
+        started = time.perf_counter()
         if not call.id or call.id in seen_call_ids:
-            return ToolResult.failure("tool call ids must be non-empty and unique")
+            result = ToolResult.failure("tool call ids must be non-empty and unique")
+            records.append(
+                ToolCallRecord(
+                    id=call.id,
+                    name=call.name,
+                    arguments=_json_arguments(call.arguments),
+                    result=result,
+                    latency_ms=0,
+                )
+            )
+            return result
         seen_call_ids.add(call.id)
 
-        started = time.perf_counter()
         result = self.tools.call(call.name, call.arguments)
         latency_ms = int((time.perf_counter() - started) * 1000)
         records.append(

@@ -450,7 +450,8 @@ Both live in `backend/.env`, which is gitignored:
 
 | Variable | Effect if absent |
 |---|---|
-| `CONNECTION_STRING` | PostgreSQL DSN. Database-backed tests skip; persistence is unavailable. |
+| `CONNECTION_STRING` | Application PostgreSQL DSN. Persistence is unavailable when absent. Tests never inherit this value. |
+| `TEST_DATABASE_URL` | Disposable PostgreSQL DSN used only by tests. Database-backed tests skip when absent. |
 | `ANTHROPIC_API_KEY` | LLM categorisation is unavailable; rules and the harness still run. |
 | `ANTHROPIC_MODEL` | Defaults to `claude-sonnet-5`. The published benchmark ran `claude-haiku-4-5`. |
 | `AGENT_MODEL` | Defaults to `claude-opus-5`; affects local live agent evaluation only. |
