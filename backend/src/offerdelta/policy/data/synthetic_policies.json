@@ -1,0 +1,72 @@
+{
+  "corpus_version": "synthetic-finops-2026-09-01",
+  "documents": [
+    {
+      "policy_id": "POL-PROC-04",
+      "version": "demo-2",
+      "title": "Purchase and duplicate-charge review",
+      "effective_date": "2026-09-01",
+      "sections": [
+        {
+          "section": "2.1",
+          "heading": "High-value purchases",
+          "text": "Purchases above $3,000.00 require an itemized receipt and human review before any ledger change.",
+          "tags": ["purchase", "receipt", "threshold", "review"],
+          "threshold": "3000.00"
+        },
+        {
+          "section": "2.2",
+          "heading": "Possible duplicate charges",
+          "text": "Charges with the same merchant and amount posted within ten minutes are possible duplicates. An analyst must compare transaction evidence and obtain human approval before reversal or any ledger change.",
+          "tags": ["duplicate", "merchant", "reversal", "approval"]
+        },
+        {
+          "section": "3.1",
+          "heading": "Subscription renewal variance",
+          "text": "A software or subscription renewal more than twenty percent above its prior charge requires owner verification and contract evidence before approval.",
+          "tags": ["software", "subscription", "renewal", "variance"]
+        }
+      ]
+    },
+    {
+      "policy_id": "POL-EXP-02",
+      "version": "demo-1",
+      "title": "Employee expense evidence",
+      "effective_date": "2026-07-15",
+      "sections": [
+        {
+          "section": "1.4",
+          "heading": "Reimbursement documentation",
+          "text": "Employees must submit reimbursements within thirty days. An itemized receipt is required for expenses above $75.00.",
+          "tags": ["reimbursement", "employee", "receipt", "deadline"]
+        },
+        {
+          "section": "2.3",
+          "heading": "Travel exceptions",
+          "text": "Airfare changes and hotel exceptions require the business purpose, traveler name, and manager approval to be attached to the expense.",
+          "tags": ["travel", "airfare", "hotel", "manager"]
+        }
+      ]
+    },
+    {
+      "policy_id": "POL-CLOSE-03",
+      "version": "demo-1",
+      "title": "Month-end close controls",
+      "effective_date": "2026-08-01",
+      "sections": [
+        {
+          "section": "4.2",
+          "heading": "Unmatched transaction review",
+          "text": "Unmatched bank transactions older than five business days must be assigned to an owner and documented before the monthly close is certified.",
+          "tags": ["unmatched", "bank", "owner", "close"]
+        },
+        {
+          "section": "5.1",
+          "heading": "Evidence retention",
+          "text": "Approval evidence, receipts, and reconciliation records must be retained for seven years after the close period.",
+          "tags": ["retention", "evidence", "receipt", "reconciliation"]
+        }
+      ]
+    }
+  ]
+}

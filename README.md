@@ -7,7 +7,8 @@ spend changes, flags possible duplicate charges, cites a review policy, and prep
 > **What is live?** The browser runs a deterministic investigation over two bundled,
 > synthetic datasets. It calls six read-only tools but does **not** call an LLM. The optional
 > local agent can call an Anthropic model after explicit confirmation; that path has not been
-> deployed or benchmarked. Policy lookup is keyword retrieval, **not production RAG**.
+> deployed or benchmarked. Policy evidence uses deterministic BM25 retrieval over a versioned,
+> synthetic seven-section corpus; this is a reproducible RAG slice, **not production RAG**.
 
 ## Try the current demo
 
@@ -31,17 +32,18 @@ two scenarios before using it in an application.
 | --- | --- |
 | Exact financial calculations | `Decimal` arithmetic and decimal strings across HTTP; merchant drivers reconcile to the spend delta. |
 | Bounded tool use | Six validated read-only operations tools, an auditable runtime, and an MCP stdio adapter. |
+| Grounded policy retrieval | Section-aware ingestion, deterministic BM25 ranking, versioned citations, and an authored retrieval regression set. |
 | Safety boundary | Duplicate charges are candidates, not automatic reversals; proposals are unpersisted and require human review. |
 | Data isolation | The public workbench only exposes allowlisted synthetic cases. Existing authenticated transaction APIs use tenant-scoped repositories. |
 | Verification | Unit, contract, property, and database integration tests; the latest integration run still needs CI/PostgreSQL confirmation. |
 
 ```text
 bundled synthetic transactions ─▶ search / spend / duplicate tools ─▶ spend drivers + exception
-synthetic policy excerpt ────────▶ cited keyword lookup ──────────▶ review requirement
-                                                                │
-                                                                ▼
-                                                 unpersisted review proposal
-                                                 (no approval executor or ledger write)
+versioned synthetic policies ───▶ section chunks ─▶ BM25 ranking ───▶ cited review requirement
+                                                                        │
+                                                                        ▼
+                                                         unpersisted review proposal
+                                                         (no approval executor or ledger write)
 ```
 
 The same investigation code handles both datasets; Sample B is loaded from
@@ -66,7 +68,8 @@ it does not invoke an agent or claim a duplicate charge.
 
 ## What is not finished
 
-- No real tenant-data operations agent, approval executor, or production policy RAG.
+- No real tenant-data operations agent, approval executor, or tenant-isolated production policy
+  ingestion/vector retrieval. The committed BM25 corpus and evaluation are intentionally synthetic.
 - No held-out evaluation of the live operations agent. Historical categorisation and offer-tool
   results below measure earlier work, **not** this product's agent accuracy.
 - New code must be merged, pass CI with PostgreSQL, and be deployed before a public link can
@@ -350,6 +353,23 @@ PYTHONPATH=src uv run python run_operations_agent.py --live   # requires API key
 The live run is not deployed, scored, or claimed as product performance. It only sees the same
 synthetic ledger and cannot execute a write.
 
+### Policy retrieval and evaluation
+
+`retrieve_policy` no longer switches on a few hard-coded keywords. The package loads three
+versioned synthetic policy documents, validates their metadata, and creates seven independently
+citable section chunks. A dependency-free BM25 index ranks those chunks and returns the score,
+matched terms, corpus version, policy version, effective date, section, and source URI with each
+result. Both the scripted investigation and the optional agent/MCP path use this same retriever.
+
+Open `GET /v1/demo/policy-retrieval/evaluation` to inspect all eight committed test queries and
+their rankings. The report calculates Recall@1, Recall@3, mean reciprocal rank, and abstention on
+one out-of-domain query. It is an authored synthetic regression set for catching retrieval drift,
+not a held-out benchmark or a claim about live company policies.
+
+This slice deliberately keeps ranking inspectable instead of hiding it behind a framework. A
+production adapter can add tenant-isolated object storage, embeddings, a vector index, reranking,
+and access-control filters without changing the agent's `retrieve_policy` tool contract.
+
 The historical comparison engine is also exposed in code as six read-only tools: profile discovery,
 offer comparison, component explanation, break-even, equivalent salary, and negotiation gap. One
 canonical registry owns every name, description, strict JSON Schema, and implementation. An
@@ -606,9 +626,10 @@ Stated plainly, because a portfolio that only lists strengths is not evidence of
   cannot overlap; a few hundred transactions are classified serially. The transport is a port, so an
   async adapter is a contained change — deferred until batch throughput is a measured problem rather
   than an assumed one.
-- **No production policy RAG.** The workbench uses a single versioned synthetic excerpt and keyword
-  lookup. Tenant-isolated document ingestion, versioning, retrieval evaluation, and citations to
-  real policies are future work.
+- **No production policy RAG.** The workbench now has versioned section ingestion, BM25 retrieval,
+  citations, and a small authored evaluation set, but only over seven synthetic sections.
+  Tenant-isolated uploads, document parsing, embeddings/vector storage, ACL filtering, reranking,
+  and evaluation against real relevance judgments remain future work.
 - **No tenant-data operations agent or approval executor.** The public scenarios read two bundled
   synthetic ledgers and return unpersisted proposals. The old transaction API and tenant
   isolation exist, but have not been wired into the six operations tools. The workbench's scripted

@@ -23,7 +23,7 @@
   <section class="block"><h2 class="section-title">Exception awaiting review</h2><div class="panel"><div class="row"><strong id="duplicate-head">Possible duplicate charge</strong><strong class="risk">Needs review</strong></div><p class="mono sub" id="transaction-ids"></p><p id="duplicate-evidence"></p><p class="policy" id="policy-summary"></p><p class="sub" id="policy-source"></p><div class="status"><strong>Awaiting human approval</strong><div class="sub">Proposal only · No ledger or review-queue changes made</div></div></div></section></div>
   <section class="block trace"><h2 class="section-title">Tool trace · scripted sequence</h2><div class="panel" id="trace" aria-label="Structured tool call trace"></div></section>
 </div>
-<div class="proofs"><section class="panel"><h2 class="section-title">Policy evidence</h2><p>Versioned synthetic policy excerpt with a source and section. Lookup is deterministic keyword retrieval, <strong>not vector RAG</strong>.</p><p class="mono sub">POL-PROC-04 · section 2.1 · demo-1</p></section><section id="mcp" class="panel"><h2 class="section-title">MCP &amp; evaluation</h2><p>Six read-only investigation tools over synthetic transactions. No destructive tools. The historical 28-task offer-tool scripted oracle validates its harness, <strong>not this agent's live-model performance</strong>.</p><p class="sub">Official MCP SDK · stdio · no production data connection</p></section></div>
+<div class="proofs"><section class="panel"><h2 class="section-title">Policy RAG evidence</h2><p>Deterministic <strong>BM25 retrieval</strong> ranks seven independently citable sections from a versioned synthetic corpus. Each result exposes its score, matched terms, version, and source.</p><p class="mono sub">POL-PROC-04@demo-2 · section chunks · synthetic-finops-2026-09-01</p><p><a href="/v1/demo/policy-retrieval/evaluation" id="retrieval-evaluation-link">Inspect retrieval evaluation JSON</a></p></section><section id="mcp" class="panel"><h2 class="section-title">MCP &amp; evaluation</h2><p>Six read-only investigation tools over synthetic transactions. No destructive tools. The policy smoke set is an authored regression check, <strong>not live-traffic accuracy</strong>.</p><p class="sub">Official MCP SDK · stdio · no production data connection</p></section></div>
 <footer>Legacy offer-comparison proof remains available at <a href="/demo/comparison" id="legacy-link">the comparison demo</a>. This workbench is the new product direction.</footer>
 </main>
 <script>
@@ -44,7 +44,7 @@ function render(data){
   for(const driver of s.drivers){const row=document.createElement('div'),name=document.createElement('span'),amount=document.createElement('strong');row.className='row';name.textContent=driver.merchant;amount.className='num';amount.textContent=money(driver.change);row.append(name,amount);drivers.append(row)}
   set('transaction-ids',d.transaction_ids.join(' · '));
   set('duplicate-evidence',`${d.merchant}: two ${money(d.amount_each)} charges ${d.minutes_apart} minutes apart. This is a candidate, not proof of duplicate payment.`);
-  set('policy-summary',p.text);set('policy-source',`${p.id} · ${p.version} · §${p.section} · ${p.source}`);
+  set('policy-summary',p.text);set('policy-source',`${p.id} · ${p.version} · §${p.section} · BM25 ${p.score} · ${p.source}`);
   const trace=byId('trace');trace.replaceChildren();
   for(const step of data.trace){
     const details=document.createElement('details'), summary=document.createElement('summary');

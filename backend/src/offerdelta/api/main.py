@@ -61,6 +61,7 @@ from offerdelta.domain.users.identity import normalise_email
 from offerdelta.infrastructure.auth.tokens import decode_token, issue_token
 from offerdelta.infrastructure.memory.idempotency import InMemoryIdempotencyStore
 from offerdelta.infrastructure.postgres.engine import get_engine
+from offerdelta.policy.evaluation import EvaluationValue, evaluate_policy_retrieval
 
 #: Bumped whenever a calculation rule changes. Every result will reference it
 #: once results are persisted, so a stored figure stays reproducible.
@@ -84,9 +85,10 @@ app = FastAPI(
     summary="Synthetic read-only transaction investigations and approval-gated design",
     description=(
         "**Public demo mode: the agent demonstration uses synthetic in-memory transactions only.** "
-        "It executes a fixed scripted tool sequence, not a live model. Policy lookup is "
-        "deterministic keyword search, not vector RAG. Review proposals do not mutate a ledger "
-        "or queue. Database-backed routes, when configured, are separately authenticated.\n\n"
+        "It executes a fixed scripted tool sequence, not a live model. Policy evidence comes from "
+        "deterministic BM25 retrieval over a versioned synthetic corpus. Review proposals do not "
+        "mutate a ledger or queue. Database-backed routes, when configured, are separately "
+        "authenticated.\n\n"
         "`/demo/evaluation/latest` publishes aggregate results from evaluation "
         "runs performed locally for the legacy categorisation research. It carries counts and "
         "rates only - no transactions, amounts, merchants, dates, or per-row "
@@ -142,6 +144,12 @@ def demo_investigation() -> dict[str, JsonValue]:
 def run_demo_investigation(_request: DemoInvestigationRequest) -> dict[str, JsonValue]:
     """Run a bundled read-only scenario, never an unrestricted live-model prompt."""
     return investigate_demo(_request.scenario)
+
+
+@app.get("/v1/demo/policy-retrieval/evaluation")
+def policy_retrieval_evaluation() -> dict[str, EvaluationValue]:
+    """Ranking regression metrics over authored synthetic queries, not live-traffic accuracy."""
+    return evaluate_policy_retrieval()
 
 
 @lru_cache(maxsize=1)

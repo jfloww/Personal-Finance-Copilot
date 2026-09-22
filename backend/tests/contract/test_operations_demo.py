@@ -11,13 +11,24 @@ def test_workbench_and_read_only_api_have_the_same_synthetic_scenario() -> None:
         assert page.status_code == 200
         assert "MyFinSecretary" in page.text
         assert "not a live AI model" in page.text
-        assert "not vector RAG" in page.text
+        assert "BM25 retrieval" in page.text
         read = client.get("/v1/demo/agent/investigation")
         run = client.post("/v1/demo/agent/run", json={"scenario": "august_software_exceptions"})
         assert read.status_code == run.status_code == 200
         assert read.json() == run.json()
         assert read.json()["ledger_mutated"] is False
         assert read.json()["proposal"]["status"] == "proposal_only"
+
+
+def test_policy_retrieval_evaluation_is_public_and_explicitly_synthetic() -> None:
+    with TestClient(app) as client:
+        response = client.get("/v1/demo/policy-retrieval/evaluation")
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["retrieval"] == "bm25_v1"
+        assert payload["query_count"] == 8
+        assert payload["metrics"]["recall_at_1"] == "1.0000"
+        assert "not live-traffic accuracy" in payload["interpretation"]
 
 
 def test_public_api_rejects_other_scenarios_and_unknown_fields() -> None:

@@ -1,8 +1,4 @@
-"""Read-only transaction investigations over an explicitly synthetic ledger.
-
-The fixed corpus is not a tenant repository and the policy lookup is not RAG.
-It makes the public demo reproducible without exposing financial records.
-"""
+"""Read-only transaction investigations over an explicitly synthetic ledger."""
 
 from __future__ import annotations
 
@@ -10,10 +6,12 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal
 from functools import partial
-from typing import Final
+from typing import Final, cast
 
 from offerdelta.agent.tools.registry import JsonValue, Tool, ToolRegistry, ToolResult
 from offerdelta.domain.common.errors import ValidationError
+from offerdelta.policy.corpus import PolicyChunk, load_policy_corpus
+from offerdelta.policy.retrieval import PolicyRetriever, default_policy_retriever
 
 
 @dataclass(frozen=True)
@@ -83,17 +81,8 @@ TRANSACTIONS: Final[tuple[DemoTransaction, ...]] = (
 
 DUPLICATE_WINDOW_MINUTES: Final = 5
 
-POLICY: Final = {
-    "id": "POL-PROC-04",
-    "version": "demo-1",
-    "title": "Synthetic purchase review policy",
-    "section": "2.1",
-    "text": (
-        "Purchases above $3,000.00 require a receipt and human review before any ledger change."
-    ),
-    "threshold": "3000.00",
-    "source": "synthetic://policies/POL-PROC-04#2.1",
-}
+PURCHASE_POLICY_ID: Final = "POL-PROC-04"
+PURCHASE_POLICY_SECTION: Final = "2.1"
 
 
 def _schema(properties: dict[str, object], required: list[str]) -> dict[str, object]:
@@ -179,14 +168,38 @@ def _duplicates(
     return ToolResult.success({"month": str(month), "pairs": pairs, "count": len(pairs)})
 
 
-def _policy(args: Mapping[str, object]) -> ToolResult:
-    query = str(args["query"]).lower()
-    # Deliberately small, deterministic text retrieval: no vector index or LLM.
-    matched = any(
-        term in query for term in ("receipt", "review", "purchase", "duplicate", "policy")
+def _policy(args: Mapping[str, object], *, retriever: PolicyRetriever) -> ToolResult:
+    query = str(args["query"])
+    limit_value = args.get("limit", 3)
+    if isinstance(limit_value, bool) or not isinstance(limit_value, int):
+        raise ValidationError("limit must be an integer")
+    matches = retriever.search(query, limit=limit_value)
+    citations: list[JsonValue] = [
+        cast(JsonValue, match.citation(rank)) for rank, match in enumerate(matches, 1)
+    ]
+    return ToolResult.success(
+        {
+            "query": query,
+            "citations": citations,
+            "retrieved_count": len(citations),
+            "retrieval": "bm25_v1",
+            "corpus_version": retriever.corpus_version,
+        }
     )
-    citations: list[JsonValue] = [dict(POLICY)] if matched else []
-    return ToolResult.success({"citations": citations, "retrieval": "synthetic_keyword_v1"})
+
+
+def _purchase_review_policy() -> tuple[PolicyChunk, str]:
+    chunk = next(
+        (
+            item
+            for item in load_policy_corpus()
+            if item.policy_id == PURCHASE_POLICY_ID and item.section == PURCHASE_POLICY_SECTION
+        ),
+        None,
+    )
+    if chunk is None or chunk.threshold is None:
+        raise ValidationError("synthetic purchase review policy is unavailable")
+    return chunk, chunk.threshold
 
 
 def _context(args: Mapping[str, object], transactions: tuple[DemoTransaction, ...]) -> ToolResult:
@@ -194,11 +207,14 @@ def _context(args: Mapping[str, object], transactions: tuple[DemoTransaction, ..
     item = next((t for t in transactions if t.id == identifier), None)
     if item is None:
         return ToolResult.failure("transaction not found in the synthetic demo ledger")
+    policy, threshold = _purchase_review_policy()
     return ToolResult.success(
         {
             "transaction": _transaction(item),
-            "policy_id": POLICY["id"],
-            "over_policy_threshold": item.amount > Decimal(POLICY["threshold"]),
+            "policy_id": policy.policy_id,
+            "policy_version": policy.version,
+            "policy_section": policy.section,
+            "over_policy_threshold": item.amount > Decimal(threshold),
         }
     )
 
@@ -237,10 +253,12 @@ def _pair_contains(pair: JsonValue, identifier: object) -> bool:
 
 def build_operations_registry(
     transactions: tuple[DemoTransaction, ...] = TRANSACTIONS,
+    policy_retriever: PolicyRetriever | None = None,
 ) -> ToolRegistry:
     """Six closed-world investigation tools bound to one immutable synthetic ledger."""
     if not transactions:
         raise ValidationError("an operations tool registry needs transactions")
+    selected_retriever = policy_retriever or default_policy_retriever()
     month: dict[str, object] = {"type": "string", "enum": sorted({t.month for t in transactions})}
     return ToolRegistry(
         (
@@ -265,10 +283,15 @@ def build_operations_registry(
             ),
             Tool(
                 "retrieve_policy",
-                "Keyword lookup in a versioned synthetic policy excerpt "
-                "with a citation; not vector RAG.",
-                _schema({"query": ID}, ["query"]),
-                _policy,
+                "BM25 retrieval over versioned synthetic policy sections with ranked citations.",
+                _schema(
+                    {
+                        "query": ID,
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 5},
+                    },
+                    ["query"],
+                ),
+                partial(_policy, retriever=selected_retriever),
             ),
             Tool(
                 "get_transaction_context",

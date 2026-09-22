@@ -56,10 +56,34 @@ def test_policy_has_citation_and_unmatched_query_has_no_fabricated_citation() ->
     citations = hit.payload["citations"]
     assert isinstance(citations, list)
     assert isinstance(citations[0], dict)
-    assert citations[0]["source"] == "synthetic://policies/POL-PROC-04#2.1"
-    assert hit.payload["retrieval"] == "synthetic_keyword_v1"
+    assert citations[0]["chunk_id"] == "POL-PROC-04@demo-2#2.1"
+    assert citations[0]["source"] == "synthetic://policies/POL-PROC-04@demo-2#2.1"
+    assert citations[0]["rank"] == 1
+    assert Decimal(str(citations[0]["score"])) > 0
+    assert hit.payload["retrieval"] == "bm25_v1"
+    assert hit.payload["corpus_version"] == "synthetic-finops-2026-09-01"
     miss = registry.call("retrieve_policy", {"query": "unrelated"})
     assert miss.payload["citations"] == []
+
+
+def test_policy_retrieval_ranks_distinct_sections_and_honours_limit() -> None:
+    registry = build_operations_registry()
+    duplicate = registry.call(
+        "retrieve_policy", {"query": "reverse duplicate merchant charges", "limit": 1}
+    )
+    renewal = registry.call(
+        "retrieve_policy", {"query": "software subscription renewal variance", "limit": 1}
+    )
+    assert duplicate.payload["retrieved_count"] == 1
+    duplicate_citations = duplicate.payload["citations"]
+    renewal_citations = renewal.payload["citations"]
+    assert isinstance(duplicate_citations, list)
+    assert isinstance(duplicate_citations[0], dict)
+    assert isinstance(renewal_citations, list)
+    assert isinstance(renewal_citations[0], dict)
+    assert duplicate_citations[0]["chunk_id"] == "POL-PROC-04@demo-2#2.2"
+    assert renewal_citations[0]["chunk_id"] == "POL-PROC-04@demo-2#3.1"
+    assert not registry.call("retrieve_policy", {"query": "receipt", "limit": 0}).ok
 
 
 def test_tools_reject_unscoped_and_invalid_requests() -> None:

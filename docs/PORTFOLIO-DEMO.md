@@ -17,6 +17,8 @@ deterministic investigation, **not** a live model. It accepts no uploads or arbi
 4. Show `POST /v1/demo/agent/run` in `/docs`. The request permits only the two
    bundled scenarios. The response uses exact decimal strings and returns a proposal,
    never a ledger or review-queue write.
+5. Open `GET /v1/demo/policy-retrieval/evaluation`. Show the corpus version, the
+   per-query ranked chunk IDs, Recall@k, MRR, and the out-of-domain abstention case.
 
 ## What the implementation proves
 
@@ -27,8 +29,11 @@ deterministic investigation, **not** a live model. It accepts no uploads or arbi
   not invoke them. This distinction is visible on the page and in the API response.
 - Financial deltas and merchant drivers use `Decimal`; tests assert that their sum
   reconciles. Duplicate matches are **candidates**, not proof of a double payment.
-- The public policy excerpt is versioned and cited, but lookup is keyword-based;
-  it is **not RAG over real policies**.
+- Three synthetic policy documents are ingested into seven citable sections. A deterministic
+  BM25 retriever returns ranking scores, matched terms, versions, effective dates, and sources.
+  The same retrieval tool is available in-process and over MCP.
+- Eight authored synthetic queries provide a transparent retrieval regression check. This is
+  explicitly **not** a held-out benchmark or evidence of performance on real company policies.
 - A review proposal is deliberately unpersisted. Human approval and any subsequent
   transaction change are **not** implemented in this public workflow.
 
@@ -38,6 +43,8 @@ deterministic investigation, **not** a live model. It accepts no uploads or arbi
 | --- | --- |
 | Investigation orchestration | `backend/src/offerdelta/application/queries/operations_demo.py` |
 | Tool schemas and implementations | `backend/src/offerdelta/agent/tools/operations.py` |
+| Policy ingestion and BM25 retrieval | `backend/src/offerdelta/policy/` |
+| Retrieval regression tests | `backend/tests/unit/policy/test_retrieval.py` |
 | Synthetic CSV parser and allowlisted case | `backend/src/offerdelta/demo/operations_cases.py` |
 | API contract | `backend/src/offerdelta/api/main.py` |
 | Browser workbench | `backend/src/offerdelta/api/static/agent.html` |
@@ -45,7 +52,6 @@ deterministic investigation, **not** a live model. It accepts no uploads or arbi
 
 ## Before sharing externally
 
-- Commit and push the current agent work; untracked files are invisible on GitHub.
 - Confirm CI with PostgreSQL and check the deployed `/` page is this version.
 - Record a short screen capture of both scenarios and the trace. Link it from the
   README so a reviewer can understand the project without local setup.
