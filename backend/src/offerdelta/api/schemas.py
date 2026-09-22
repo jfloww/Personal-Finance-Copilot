@@ -20,6 +20,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from offerdelta.application.queries.observed_debits import ObservedDebitComparison
 from offerdelta.application.reports.monthly import MonthCoverage, MonthlyReport
 from offerdelta.domain.common.derivation import DerivationNode
 from offerdelta.evaluation.labels import ABSTAIN, LABEL_SPACE
@@ -296,6 +297,64 @@ class MonthlyReportSchema(BaseModel):
         return cls(
             tree=DerivationNodeSchema.of(report.tree),
             coverage=MonthCoverageSchema.of(report.coverage),
+        )
+
+
+class MerchantDebitDeltaSchema(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    merchant: str
+    previous: str
+    current: str
+    delta: str
+
+
+class CurrencyDebitComparisonSchema(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    currency: str
+    previous: str
+    current: str
+    delta: str
+    merchants: list[MerchantDebitDeltaSchema]
+
+
+class ObservedDebitComparisonSchema(BaseModel):
+    """Raw debit evidence, not classified spending or a duplicate-charge verdict."""
+
+    model_config = ConfigDict(frozen=True)
+
+    previous_coverage: MonthCoverageSchema
+    current_coverage: MonthCoverageSchema
+    currencies: list[CurrencyDebitComparisonSchema]
+    caveat: str = (
+        "Observed debits may include transfers and unclassified transactions. "
+        "Compare only months whose coverage.complete is true."
+    )
+
+    @classmethod
+    def of(cls, comparison: ObservedDebitComparison) -> ObservedDebitComparisonSchema:
+        return cls(
+            previous_coverage=MonthCoverageSchema.of(comparison.previous_coverage),
+            current_coverage=MonthCoverageSchema.of(comparison.current_coverage),
+            currencies=[
+                CurrencyDebitComparisonSchema(
+                    currency=group.currency,
+                    previous=str(group.previous),
+                    current=str(group.current),
+                    delta=str(group.delta),
+                    merchants=[
+                        MerchantDebitDeltaSchema(
+                            merchant=row.merchant,
+                            previous=str(row.previous),
+                            current=str(row.current),
+                            delta=str(row.delta),
+                        )
+                        for row in group.merchants
+                    ],
+                )
+                for group in comparison.currencies
+            ],
         )
 
 

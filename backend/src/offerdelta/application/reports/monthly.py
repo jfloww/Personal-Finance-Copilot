@@ -84,6 +84,14 @@ class MonthlyReport:
     coverage: MonthCoverage
 
 
+@dataclass(frozen=True)
+class LoadedMonth:
+    """One tenant-scoped row set and coverage calculated from those same rows."""
+
+    rows: list[StoredTransaction]
+    coverage: MonthCoverage
+
+
 def available_months(scope: TenantScope, *, threshold: Decimal) -> list[MonthCoverage]:
     """Every month this tenant has at least one stored row for, oldest first.
 
@@ -123,11 +131,17 @@ def monthly_report(
     would open a window where a concurrent write between the two SELECTs
     could make `coverage.rows` disagree with the tree's own root sum.
     """
+    loaded = load_month(scope, year, month, threshold=threshold)
+    tree = build_monthly_report(year, month, [_to_classified(row) for row in loaded.rows])
+    return MonthlyReport(tree=tree, coverage=loaded.coverage)
+
+
+def load_month(scope: TenantScope, year: int, month: int, *, threshold: Decimal) -> LoadedMonth:
+    """Fetch a month's rows once, then calculate coverage over precisely that set."""
     stored = TransactionRepository(scope).for_month(year, month)
-    tree = build_monthly_report(year, month, [_to_classified(row) for row in stored])
     windows = _snapshot_windows(scope)
     coverage = _coverage(scope, year, month, stored, windows=windows, threshold=threshold)
-    return MonthlyReport(tree=tree, coverage=coverage)
+    return LoadedMonth(rows=stored, coverage=coverage)
 
 
 def _to_classified(row: StoredTransaction) -> ClassifiedTransaction:

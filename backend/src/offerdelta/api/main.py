@@ -30,6 +30,7 @@ from offerdelta.api.schemas import (
     LoginSchema,
     MonthCoverageSchema,
     MonthlyReportSchema,
+    ObservedDebitComparisonSchema,
     ReadinessSchema,
     ReviewQueueRowSchema,
     TokenSchema,
@@ -41,6 +42,7 @@ from offerdelta.application.auth import authenticate, load_active_user
 from offerdelta.application.idempotency import IdempotencyOutcome, IdempotencyService
 from offerdelta.application.queries.get_demo_comparison import get_demo_comparison
 from offerdelta.application.queries.get_demo_derivation import get_demo_derivation
+from offerdelta.application.queries.observed_debits import compare_observed_debits
 from offerdelta.application.queries.operations_demo import investigate_demo
 from offerdelta.application.reports.monthly import available_months, monthly_report
 from offerdelta.application.reports.review import REVIEW_THRESHOLD, confirm, queue
@@ -510,6 +512,31 @@ def report_monthly(
     except ValidationError as error:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error)) from error
     return MonthlyReportSchema.of(monthly_report(scope, year, mon, threshold=REVIEW_THRESHOLD))
+
+
+@app.get(
+    "/v1/reports/observed-debits/{month}",
+    include_in_schema=_DATABASE_CONFIGURED,
+    response_model=ObservedDebitComparisonSchema,
+)
+def report_observed_debits(
+    month: str, scope: Annotated[TenantScope, Depends(_scope)]
+) -> ObservedDebitComparisonSchema:
+    """Compare this tenant's raw debit magnitudes with the preceding month.
+
+    Months need not be complete for the evidence to be visible, but their
+    coverage is returned so clients cannot silently present a partial-month
+    comparison as a definitive change in spending.
+    """
+    try:
+        year, mon = _parse_month(month)
+        if (year, mon) == (1, 1):
+            raise ValidationError("0001-01 has no preceding calendar month")
+    except ValidationError as error:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error)) from error
+    return ObservedDebitComparisonSchema.of(
+        compare_observed_debits(scope, year, mon, threshold=REVIEW_THRESHOLD)
+    )
 
 
 @app.get(

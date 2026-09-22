@@ -49,6 +49,14 @@ The same investigation code handles both datasets; Sample B is loaded from
 The API offers only `august_software_exceptions` and `alternate_billing_review` at
 `POST /v1/demo/agent/run`. It accepts no visitor uploads or arbitrary prompts.
 
+Authenticated tenants can also request `GET /v1/reports/observed-debits/{YYYY-MM}`
+to compare their stored bank debits with the preceding month. The response
+separates currencies, lists merchant-level changes, and includes both months'
+snapshot coverage. It is read-only and is **not** a classified-spending total:
+transfers and unclassified debits may be present, and a partial import cannot
+support a definitive month-over-month conclusion. This endpoint is not part of
+the public synthetic demo and requires the database-backed authentication setup.
+
 ## What is not finished
 
 - No real tenant-data operations agent, approval executor, or production policy RAG.
