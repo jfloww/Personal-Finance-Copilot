@@ -23,9 +23,9 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     env:
-      CONNECTION_STRING: postgresql://postgres:postgres@localhost:5432/offerdelta_test
+      TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/offerdelta_test
       # An arbitrary, self-issued string with no external validity - the same
-      # kind of thing CONNECTION_STRING above is, not the kind ANTHROPIC_API_KEY
+      # kind of thing TEST_DATABASE_URL above is, not the kind ANTHROPIC_API_KEY
       # is. There is nothing here to leak; it signs tokens for an ephemeral
       # service container that is gone at the end of the job.
       JWT_SECRET: ci-only-throwaway-signing-key-not-a-real-secret
@@ -59,6 +59,8 @@ jobs:
 
       - name: Migrate
         run: uv run alembic upgrade head
+        env:
+          CONNECTION_STRING: ${{ env.TEST_DATABASE_URL }}
 
       - name: Tests
         run: uv run pytest

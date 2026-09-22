@@ -1,14 +1,13 @@
 """Database fixtures.
 
-Every test runs inside a transaction that is rolled back afterwards, so the
-suite can point at a real PostgreSQL instance without leaving anything behind.
-That matters here: the target is a live Neon database, not a throwaway
-container, and a test that litters is a test nobody runs twice.
+Every test runs inside a transaction that is rolled back afterwards. The suite
+only accepts an explicitly configured TEST_DATABASE_URL; it never inherits the
+application's CONNECTION_STRING or backend/.env credential.
 
-The whole module skips when CONNECTION_STRING is unset, which is what makes a
+The whole module skips when TEST_DATABASE_URL is unset, which is what makes a
 local checkout without a database still able to run the suite. CI does set it,
-against a service container, and - since Task 8 - sets JWT_SECRET too, so
-these tests run there.
+against a disposable service container, and sets JWT_SECRET too, so these tests
+run there.
 """
 
 from __future__ import annotations
@@ -41,7 +40,7 @@ def _require(available: bool, reason: str) -> pytest.MarkDecorator:
     """Skip on a checkout that lacks the prerequisite; fail outright in CI.
 
     A `skipif` alone is how this branch already lost coverage once: drop
-    `CONNECTION_STRING` or `JWT_SECRET` from `ci.yml` and every test guarded
+    `TEST_DATABASE_URL` or `JWT_SECRET` from `ci.yml` and every test guarded
     by it quietly disappears, and a build with fewer tests than yesterday
     still goes green. `CI` is the variable every CI runner sets and a
     developer's shell does not, so the same missing prerequisite that skips
@@ -68,8 +67,8 @@ def pytest_collection_finish(session: pytest.Session) -> None:  # noqa: ARG001
 
 
 requires_database = _require(
-    get_settings().database_available,
-    reason="CONNECTION_STRING is not set; database tests need a live PostgreSQL",
+    bool(os.environ.get("TEST_DATABASE_URL")),
+    reason="TEST_DATABASE_URL is not set; database tests need a disposable PostgreSQL",
 )
 
 #: The auth tests mint and verify real tokens, so they need a real signing
@@ -132,9 +131,8 @@ def scope(session: Session) -> TenantScope:
     repository has to say whose data it is looking at - the same obligation
     the application has.
 
-    The address is unique per test rather than fixed: this suite runs against
-    a live shared database, and a constant one would collide with any row a
-    previous run managed to commit.
+    The address is unique per test so interrupted or concurrently running test
+    sessions cannot collide even on a shared test service.
     """
     address = f"fixture-{uuid.uuid4().hex[:12]}@example.test"
     stored = UserRepository(session).create(address, "Fixture Owner")
