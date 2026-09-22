@@ -57,6 +57,13 @@ transfers and unclassified debits may be present, and a partial import cannot
 support a definitive month-over-month conclusion. This endpoint is not part of
 the public synthetic demo and requires the database-backed authentication setup.
 
+For a classified explanation, `GET /v1/investigations/spend-change/{YYYY-MM}`
+compares labelled spending net of refunds and returns each merchant's signed
+contribution with the underlying transaction IDs. Transfers and unclassified
+debits are disclosed separately, while suggested labels and incomplete import
+windows remain explicit limitations. This is deterministic, read-only analysis;
+it does not invoke an agent or claim a duplicate charge.
+
 ## What is not finished
 
 - No real tenant-data operations agent, approval executor, or production policy RAG.
