@@ -33,6 +33,7 @@ from offerdelta.api.schemas import (
     ObservedDebitComparisonSchema,
     ReadinessSchema,
     ReviewQueueRowSchema,
+    SpendChangeSchema,
     TokenSchema,
     TransactionEntrySchema,
     TransactionStoredSchema,
@@ -44,6 +45,7 @@ from offerdelta.application.queries.get_demo_comparison import get_demo_comparis
 from offerdelta.application.queries.get_demo_derivation import get_demo_derivation
 from offerdelta.application.queries.observed_debits import compare_observed_debits
 from offerdelta.application.queries.operations_demo import investigate_demo
+from offerdelta.application.queries.spend_change import explain_spend_change
 from offerdelta.application.reports.monthly import available_months, monthly_report
 from offerdelta.application.reports.review import REVIEW_THRESHOLD, confirm, queue
 from offerdelta.application.scope import TenantScope
@@ -537,6 +539,23 @@ def report_observed_debits(
     return ObservedDebitComparisonSchema.of(
         compare_observed_debits(scope, year, mon, threshold=REVIEW_THRESHOLD)
     )
+
+
+@app.get(
+    "/v1/investigations/spend-change/{month}",
+    include_in_schema=_DATABASE_CONFIGURED,
+    response_model=SpendChangeSchema,
+)
+def investigation_spend_change(
+    month: str, scope: Annotated[TenantScope, Depends(_scope)]
+) -> SpendChangeSchema:
+    """Explain labelled net-spend change with row IDs, not an LLM assertion."""
+    try:
+        year, mon = _parse_month(month)
+        comparison = explain_spend_change(scope, year, mon, threshold=REVIEW_THRESHOLD)
+    except ValidationError as error:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error)) from error
+    return SpendChangeSchema.of(comparison)
 
 
 @app.get(

@@ -106,6 +106,10 @@ def test_observed_debits_requires_a_token(client: TestClient) -> None:
     assert client.get("/v1/reports/observed-debits/2026-03").status_code == 401
 
 
+def test_spend_change_requires_a_token(client: TestClient) -> None:
+    assert client.get("/v1/investigations/spend-change/2026-03").status_code == 401
+
+
 def test_review_queue_requires_a_token(client: TestClient) -> None:
     assert client.get("/v1/review-queue").status_code == 401
 
@@ -217,6 +221,76 @@ def test_observed_debits_rejects_invalid_or_uncomparable_month(
     client: TestClient, token_a: str, month: str
 ) -> None:
     response = client.get(f"/v1/reports/observed-debits/{month}", headers=_auth(token_a))
+    assert response.status_code == 422
+
+
+def test_spend_change_reconciles_and_exposes_only_this_tenants_evidence(
+    client: TestClient, token_a: str, scope_a: TenantScope, other_scope: TenantScope
+) -> None:
+    ids = _seed(
+        scope_a,
+        [
+            ("2026-02-05", "-10.00"),
+            ("2026-02-06", "2.00"),
+            ("2026-03-05", "-25.00"),
+            ("2026-03-06", "-100.00"),
+            ("2026-03-07", "-7.00"),
+        ],
+    )
+    repo = TransactionRepository(scope_a)
+    for transaction_id, label in zip(
+        ids[:4], ["LIVING_DINING", "REFUND", "LIVING_DINING", "TRANSFER"], strict=True
+    ):
+        repo.confirm_label(transaction_id, label)
+    other_ids = _seed(other_scope, [("2026-03-05", "-999.00")])
+    TransactionRepository(other_scope).confirm_label(other_ids[0], "LIVING_DINING")
+
+    response = client.get("/v1/investigations/spend-change/2026-03", headers=_auth(token_a))
+    assert response.status_code == 200
+    body = response.json()
+    _no_floats(body)
+    assert body["previous_coverage"]["rows"] == 2
+    assert body["current_coverage"]["rows"] == 3
+    assert body["previous_coverage"]["complete"] is False
+    assert body["current_coverage"]["complete"] is False
+    usd = body["currencies"][0]
+    assert usd["previous"]["net_spending"] == "8.00"
+    assert usd["current"]["net_spending"] == "25.00"
+    assert usd["current"]["transfer_debits"] == "100.00"
+    assert usd["current"]["unclassified_debits"] == "7.00"
+    assert usd["delta"] == "17.00"
+    evidence_ids = {
+        item["transaction_id"]
+        for merchant in usd["merchants"]
+        for period in ("previous_evidence", "current_evidence")
+        for item in merchant[period]
+    }
+    assert evidence_ids == {str(ids[0]), str(ids[1]), str(ids[2])}
+    assert str(other_ids[0]) not in evidence_ids
+
+
+def test_spend_change_handles_year_boundary_and_empty_current_month(
+    client: TestClient, token_a: str, scope_a: TenantScope
+) -> None:
+    ids = _seed(scope_a, [("2025-12-05", "-4.00")])
+    TransactionRepository(scope_a).confirm_label(ids[0], "LIVING_DINING")
+
+    response = client.get("/v1/investigations/spend-change/2026-01", headers=_auth(token_a))
+    assert response.status_code == 200
+    body = response.json()
+    assert (body["previous_coverage"]["year"], body["previous_coverage"]["month"]) == (
+        2025,
+        12,
+    )
+    assert body["current_coverage"]["rows"] == 0
+    assert body["currencies"][0]["delta"] == "-4.00"
+
+
+@pytest.mark.parametrize("month", ["not-a-month", "2026-13", "0001-01"])
+def test_spend_change_rejects_invalid_or_uncomparable_month(
+    client: TestClient, token_a: str, month: str
+) -> None:
+    response = client.get(f"/v1/investigations/spend-change/{month}", headers=_auth(token_a))
     assert response.status_code == 422
 
 

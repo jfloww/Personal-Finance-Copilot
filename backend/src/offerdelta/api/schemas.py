@@ -21,6 +21,13 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from offerdelta.application.queries.observed_debits import ObservedDebitComparison
+from offerdelta.application.queries.spend_change import (
+    CurrencySpendChange,
+    MerchantSpendDelta,
+    SpendChange,
+    SpendEvidence,
+    SpendPeriod,
+)
 from offerdelta.application.reports.monthly import MonthCoverage, MonthlyReport
 from offerdelta.domain.common.derivation import DerivationNode
 from offerdelta.evaluation.labels import ABSTAIN, LABEL_SPACE
@@ -355,6 +362,119 @@ class ObservedDebitComparisonSchema(BaseModel):
                 )
                 for group in comparison.currencies
             ],
+        )
+
+
+class SpendEvidenceSchema(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    transaction_id: str
+    posted_on: date
+    contribution: str = Field(description="Signed exact decimal contribution to net spending.")
+    label: str
+    confirmed: bool
+
+    @classmethod
+    def of(cls, row: SpendEvidence) -> SpendEvidenceSchema:
+        return cls(
+            transaction_id=str(row.transaction_id),
+            posted_on=row.posted_on,
+            contribution=str(row.contribution),
+            label=row.label,
+            confirmed=row.confirmed,
+        )
+
+
+class SpendPeriodSchema(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    gross_spending: str
+    refunds: str
+    net_spending: str
+    unclassified_debits: str
+    transfer_debits: str
+    inconsistent_debits: str
+    unclassified_rows: int
+    suggested_rows: int
+    inconsistent_rows: int
+
+    @classmethod
+    def of(cls, period: SpendPeriod) -> SpendPeriodSchema:
+        return cls(
+            gross_spending=str(period.gross_spending),
+            refunds=str(period.refunds),
+            net_spending=str(period.net_spending),
+            unclassified_debits=str(period.unclassified_debits),
+            transfer_debits=str(period.transfer_debits),
+            inconsistent_debits=str(period.inconsistent_debits),
+            unclassified_rows=period.unclassified_rows,
+            suggested_rows=period.suggested_rows,
+            inconsistent_rows=period.inconsistent_rows,
+        )
+
+
+class MerchantSpendDeltaSchema(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    merchant: str
+    previous: str
+    current: str
+    delta: str
+    previous_evidence: list[SpendEvidenceSchema]
+    current_evidence: list[SpendEvidenceSchema]
+
+    @classmethod
+    def of(cls, row: MerchantSpendDelta) -> MerchantSpendDeltaSchema:
+        return cls(
+            merchant=row.merchant,
+            previous=str(row.previous),
+            current=str(row.current),
+            delta=str(row.delta),
+            previous_evidence=[SpendEvidenceSchema.of(item) for item in row.previous_evidence],
+            current_evidence=[SpendEvidenceSchema.of(item) for item in row.current_evidence],
+        )
+
+
+class CurrencySpendChangeSchema(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    currency: str
+    previous: SpendPeriodSchema
+    current: SpendPeriodSchema
+    delta: str
+    merchants: list[MerchantSpendDeltaSchema]
+
+    @classmethod
+    def of(cls, group: CurrencySpendChange) -> CurrencySpendChangeSchema:
+        return cls(
+            currency=group.currency,
+            previous=SpendPeriodSchema.of(group.previous),
+            current=SpendPeriodSchema.of(group.current),
+            delta=str(group.delta),
+            merchants=[MerchantSpendDeltaSchema.of(row) for row in group.merchants],
+        )
+
+
+class SpendChangeSchema(BaseModel):
+    """An auditable labelled-spend comparison, never a model-generated verdict."""
+
+    model_config = ConfigDict(frozen=True)
+
+    previous_coverage: MonthCoverageSchema
+    current_coverage: MonthCoverageSchema
+    currencies: list[CurrencySpendChangeSchema]
+    caveat: str = (
+        "Net spending uses category-labelled debits minus labelled refunds. "
+        "Suggested labels are provisional; inspect suggested_rows, unclassified_rows, "
+        "inconsistent_rows, and both coverage.complete flags before interpreting the change."
+    )
+
+    @classmethod
+    def of(cls, comparison: SpendChange) -> SpendChangeSchema:
+        return cls(
+            previous_coverage=MonthCoverageSchema.of(comparison.previous_coverage),
+            current_coverage=MonthCoverageSchema.of(comparison.current_coverage),
+            currencies=[CurrencySpendChangeSchema.of(group) for group in comparison.currencies],
         )
 
 
