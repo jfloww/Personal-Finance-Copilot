@@ -25,6 +25,9 @@ deterministic investigation, **not** a live model. It accepts no uploads or arbi
   with direct registry calls.
 - A bounded agent runtime and optional local model path exist, but the web demo does
   not invoke them. This distinction is visible on the page and in the API response.
+- A separately configured tenant route requires authentication and explicit permission
+  before sending bounded evidence to an external model. Its tool is fixed to the requesting
+  tenant and month, is rate-limited, and returns exact evidence beside generated text.
 - Financial deltas and merchant drivers use `Decimal`; tests assert that their sum
   reconciles. Duplicate matches are **candidates**, not proof of a double payment.
 - The public policy excerpt is versioned and cited, but lookup is keyword-based;
@@ -38,6 +41,7 @@ deterministic investigation, **not** a live model. It accepts no uploads or arbi
 | --- | --- |
 | Investigation orchestration | `backend/src/offerdelta/application/queries/operations_demo.py` |
 | Tool schemas and implementations | `backend/src/offerdelta/agent/tools/operations.py` |
+| Tenant-bound tool and agent service | `backend/src/offerdelta/application/agent/` |
 | Synthetic CSV parser and allowlisted case | `backend/src/offerdelta/demo/operations_cases.py` |
 | API contract | `backend/src/offerdelta/api/main.py` |
 | Browser workbench | `backend/src/offerdelta/api/static/agent.html` |
@@ -45,7 +49,6 @@ deterministic investigation, **not** a live model. It accepts no uploads or arbi
 
 ## Before sharing externally
 
-- Commit and push the current agent work; untracked files are invisible on GitHub.
 - Confirm CI with PostgreSQL and check the deployed `/` page is this version.
 - Record a short screen capture of both scenarios and the trace. Link it from the
   README so a reviewer can understand the project without local setup.

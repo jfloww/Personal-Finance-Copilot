@@ -141,3 +141,31 @@ def test_scripted_runtime_can_call_the_tenant_tool(registry: ToolRegistry) -> No
     assert len(run.tool_calls) == 1
     assert run.tool_calls[0].result.ok
     assert run.tool_calls[0].result.payload["provisional"] is True
+
+
+def test_registry_can_be_bound_to_one_month(
+    registry: ToolRegistry,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scope = TenantScope(
+        session=Session(),
+        user=AuthenticatedUser(uuid.UUID(int=2), "owner@example.test"),
+    )
+    calls = 0
+
+    def fake_explain(
+        _scope: TenantScope, _year: int, _month: int, *, threshold: Decimal
+    ) -> SpendChange:
+        nonlocal calls
+        calls += 1
+        assert threshold == REVIEW_THRESHOLD
+        return _comparison()
+
+    monkeypatch.setattr(tenant_tools, "explain_spend_change", fake_explain)
+    bound = tenant_tools.build_tenant_spend_registry(scope, allowed_month="2026-03")
+    assert not bound.call("explain_spend_change", {"month": "2026-02"}).ok
+    assert calls == 0
+    assert bound.call("explain_spend_change", {"month": "2026-03"}).ok
+    assert calls == 1
+
+    assert registry.call("explain_spend_change", {"month": "2026-03"}).ok

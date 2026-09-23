@@ -33,6 +33,7 @@ two scenarios before using it in an application.
 | Bounded tool use | Six validated read-only operations tools, an auditable runtime, and an MCP stdio adapter. |
 | Safety boundary | Duplicate charges are candidates, not automatic reversals; proposals are unpersisted and require human review. |
 | Data isolation | The public workbench only exposes allowlisted synthetic cases. Existing authenticated transaction APIs use tenant-scoped repositories. |
+| Metered-agent boundary | Tenant evidence reaches a model only through an authenticated POST with explicit consent, a fixed month, bounded output, and per-user rate limiting. |
 | Verification | Unit, contract, property, and database integration tests; the latest integration run still needs CI/PostgreSQL confirmation. |
 
 ```text
@@ -69,11 +70,21 @@ The same classified calculation is available to a request-scoped,
 authenticated tenant is bound when the tool is created. The tool bounds its
 merchant and transaction-ID output, preserving the remaining delta as an
 explicit `other_delta`. It is not in the public synthetic tool registry, and
-no live tenant-data agent or model route is deployed yet.
+it is never published over the default MCP server.
+
+When PostgreSQL, JWT authentication, and an Anthropic key are all configured,
+`POST /v1/agent/spend-change` runs that tool through the bounded agent runtime.
+The request accepts only a month and `external_model_consent: true`: there is no
+arbitrary prompt, tenant ID, or account ID. The tool is bound to both the authenticated
+tenant and requested month before the model sees it. The response returns the exact
+tool evidence beside the generated answer, identifies whether a successful tool call
+grounded the run, and exposes aggregate token/tool-call audit fields. Calls are
+rate-limited per authenticated user. This route is not enabled on the public demo.
 
 ## What is not finished
 
-- No real tenant-data operations agent, approval executor, or production policy RAG.
+- No deployed tenant-data agent, approval executor, or production policy RAG. A configured
+  authenticated agent route exists, but it has not been load-tested or evaluated on live traffic.
 - No held-out evaluation of the live operations agent. Historical categorisation and offer-tool
   results below measure earlier work, **not** this product's agent accuracy.
 - New code must be merged, pass CI with PostgreSQL, and be deployed before a public link can
@@ -357,6 +368,13 @@ PYTHONPATH=src uv run python run_operations_agent.py --live   # requires API key
 The live run is not deployed, scored, or claimed as product performance. It only sees the same
 synthetic ledger and cannot execute a write.
 
+The tenant-data path is separate from that public registry. With database, JWT, and model
+configuration present, `POST /v1/agent/spend-change` requires explicit external-model consent and
+constructs a fresh tool registry for the authenticated user and one requested month. Attempts by
+the model to request another month fail schema validation before a repository query. Returned
+evidence is bounded and read-only; the endpoint has a per-user metered-call limit. The limit is
+process-local, so a multi-instance deployment would replace it with a shared conditional store.
+
 The historical comparison engine is also exposed in code as six read-only tools: profile discovery,
 offer comparison, component explanation, break-even, equivalent salary, and negotiation gap. One
 canonical registry owns every name, description, strict JSON Schema, and implementation. An
@@ -616,10 +634,10 @@ Stated plainly, because a portfolio that only lists strengths is not evidence of
 - **No production policy RAG.** The workbench uses a single versioned synthetic excerpt and keyword
   lookup. Tenant-isolated document ingestion, versioning, retrieval evaluation, and citations to
   real policies are future work.
-- **No tenant-data operations agent or approval executor.** The public scenarios read two bundled
-  synthetic ledgers and return unpersisted proposals. The old transaction API and tenant
-  isolation exist, but have not been wired into the six operations tools. The workbench's scripted
-  trace is not live model autonomy; operations-agent eval and live deployment are pending.
+- **No deployed or benchmarked tenant-data agent, and no approval executor.** A configured,
+  authenticated route can explain one tenant-scoped month after explicit consent, but the public
+  demo remains synthetic and scripted. The live path has no held-out task evaluation, its limiter
+  is process-local, and it cannot approve or mutate anything.
 - **No input forms.** Profiles are constructed in code or loaded from CSV; a non-developer cannot
   yet complete the flow end to end.
 - **The demo uses placeholder figures.** They are marked `ASSUMED` and are not anyone's real

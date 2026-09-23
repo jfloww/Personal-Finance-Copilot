@@ -34,11 +34,13 @@ from offerdelta.api.schemas import (
     ReadinessSchema,
     ReviewQueueRowSchema,
     SpendChangeSchema,
+    TenantSpendAgentRequest,
     TokenSchema,
     TransactionEntrySchema,
     TransactionStoredSchema,
     VersionSchema,
 )
+from offerdelta.application.agent.tenant_runtime import run_tenant_spend_agent
 from offerdelta.application.auth import authenticate, load_active_user
 from offerdelta.application.idempotency import IdempotencyOutcome, IdempotencyService
 from offerdelta.application.queries.get_demo_comparison import get_demo_comparison
@@ -59,6 +61,7 @@ from offerdelta.domain.transactions.fingerprint import FINGERPRINT_VERSION
 from offerdelta.domain.transactions.parsing import parse_amount
 from offerdelta.domain.users.identity import normalise_email
 from offerdelta.infrastructure.auth.tokens import decode_token, issue_token
+from offerdelta.infrastructure.llm.factory import build_agent_provider
 from offerdelta.infrastructure.memory.idempotency import InMemoryIdempotencyStore
 from offerdelta.infrastructure.postgres.engine import get_engine
 
@@ -190,9 +193,20 @@ _DATABASE_CONFIGURED: Final = get_settings().database_available
 #: token could ever be valid.
 _AUTH_CONFIGURED: Final = get_settings().auth_available
 
+#: This route can expose tenant evidence to the configured external model, so
+#: it is advertised only when all three boundaries are actually configured.
+_TENANT_AGENT_CONFIGURED: Final = (
+    _DATABASE_CONFIGURED and _AUTH_CONFIGURED and get_settings().llm_available
+)
+
 #: Five failed logins per address per fifteen minutes. Process-local: see
 #: `FixedWindowLimiter`'s docstring for what that does and does not guarantee.
 _login_limiter = FixedWindowLimiter(max_attempts=5, window=timedelta(minutes=15))
+
+#: A separate per-user budget boundary for metered model calls. Like the login
+#: limiter this is process-local; a multi-instance deployment needs a shared
+#: conditional store before this can be described as a global rate limit.
+_tenant_agent_limiter = FixedWindowLimiter(max_attempts=10, window=timedelta(minutes=15))
 
 
 @app.get("/v1/health/live", response_model=HealthSchema)
@@ -556,6 +570,35 @@ def investigation_spend_change(
     except ValidationError as error:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error)) from error
     return SpendChangeSchema.of(comparison)
+
+
+@app.post(
+    "/v1/agent/spend-change",
+    include_in_schema=_TENANT_AGENT_CONFIGURED,
+)
+def agent_spend_change(
+    body: TenantSpendAgentRequest,
+    scope: Annotated[TenantScope, Depends(_scope)],
+) -> dict[str, JsonValue]:
+    """Send one bounded month to the model after explicit, authenticated consent.
+
+    The model cannot select a tenant or a different month, and its only tool is
+    read-only. The response includes the exact tool evidence so a client can
+    inspect the source separately from the generated explanation.
+    """
+    if not _tenant_agent_limiter.check(str(scope.user.id)):
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "tenant agent rate limit exceeded")
+    provider = build_agent_provider()
+    if provider is None:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "the tenant spend agent is not configured",
+        )
+    try:
+        outcome = run_tenant_spend_agent(scope, body.month, provider)
+    except ValidationError as error:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error)) from error
+    return outcome.public_payload(model=provider.model)
 
 
 @app.get(

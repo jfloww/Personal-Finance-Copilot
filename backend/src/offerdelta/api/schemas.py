@@ -40,6 +40,16 @@ class DemoInvestigationRequest(BaseModel):
     scenario: Literal["august_software_exceptions", "alternate_billing_review"]
 
 
+class TenantSpendAgentRequest(BaseModel):
+    """Explicit consent to send one tenant-scoped month through the configured model."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    month: str = Field(pattern=r"^\d{4}-\d{2}$")
+    external_model_consent: Literal[True] = Field(
+        description="Must be true: bounded transaction evidence is sent to an external model."
+    )
+
+
 class DerivationNodeSchema(BaseModel):
     """One step in the explanation of a calculated figure."""
 

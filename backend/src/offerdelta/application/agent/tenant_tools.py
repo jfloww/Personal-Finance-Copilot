@@ -35,8 +35,14 @@ _CAVEAT: Final = (
 )
 
 
-def build_tenant_spend_registry(scope: TenantScope) -> ToolRegistry:
-    """Create one tool over this request's scope; no tenant identifier is accepted."""
+def build_tenant_spend_registry(
+    scope: TenantScope, *, allowed_month: str | None = None
+) -> ToolRegistry:
+    """Create one scope-bound tool, optionally restricted to one requested month."""
+    month_schema: dict[str, object] = {"type": "string", "minLength": 7}
+    if allowed_month is not None:
+        _parse_month(allowed_month)
+        month_schema = {"type": "string", "enum": [allowed_month]}
 
     def call(arguments: Mapping[str, object]) -> ToolResult:
         value = arguments.get("month")
@@ -57,7 +63,7 @@ def build_tenant_spend_registry(scope: TenantScope) -> ToolRegistry:
                 ),
                 input_schema={
                     "type": "object",
-                    "properties": {"month": {"type": "string", "minLength": 7}},
+                    "properties": {"month": month_schema},
                     "required": ["month"],
                     "additionalProperties": False,
                 },
